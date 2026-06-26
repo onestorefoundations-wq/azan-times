@@ -1,0 +1,127 @@
+# Flutter TV App — Feature Parity with Web
+
+Bring tv_app Flutter to match mosque_tv_web features.
+
+## Gap Analysis
+
+| Feature | Web ✅ | Flutter ❌ |
+|---|---|---|
+| **Register Account** (create new mosque + tenant) | ✅ `registerAccount()` in SyncService.js | ❌ Missing |
+| **Link Account** (login with user/mobile/email + password) | ✅ `linkAccount()` in SyncService.js | ❌ Missing |
+| **Disconnect Account** | ✅ `disconnectAccount()` | ❌ Missing |
+| **Push config to cloud** on save | ✅ `pushConfigToCloud()` | ❌ Missing |
+| **Realtime Supabase subscription** | ✅ channel subscription | ❌ Missing |
+| **Settings UI** (tabbed panel in-app) | ✅ SettingsOverlay.jsx | ❌ Missing (only HTTP admin server) |
+| **Slideshow panel** with modes (full/split/corner/overlay) | ✅ SlideshowPanel + TvDisplay logic | ❌ Missing — Flutter shows nothing |
+| **Slideshow display modes** (full_screen, split_screen, corner_overlay) | ✅ | ❌ |
+| **Ticker bar** with announcements from DB | ✅ scrolling text | ⚠️ Static hardcoded text |
+| **Adhan overlay** (dismissible modes) | ✅ | ⚠️ Basic only |
+| **Settings PIN protection** | ✅ keypad dialog | ❌ Missing |
+| **Device ID generation** (UUID on first launch) | ✅ | ⚠️ Hardcoded `DEFAULT_DEVICE_ID` |
+| **overlay_corner / overlay_size_percent** in slideshow_settings | ✅ | ❌ DB schema missing these columns |
+| **sync_meta: linked_username/mobile/email** columns | ✅ | ❌ DB schema missing |
+
+## Open Questions
+
+> [!IMPORTANT]
+> Slideshow images: Web stores base64 DataURL. Flutter app is Android/Windows/Linux native. Should we store base64 in SQLite (same as web) or use file paths? Base64 easiest for cross-device sync. Me recommend keep base64 (consistent with cloud sync).
+
+> [!IMPORTANT]
+> Flutter Settings UI: The current `admin_server.dart` serves an HTTP panel. Web has a full in-app overlay. Should the new settings overlay REPLACE the HTTP server, or ADD alongside it? Me recommend: add Flutter in-app overlay (same as web), keep HTTP server for remote access.
+
+## Proposed Changes
+
+---
+
+### 1. Database Schema Upgrade
+
+#### [MODIFY] [database_helper.dart](file:///c:/DATA_02/masjid-azan-times/tv_app/lib/database_helper.dart)
+- Bump DB version to `2`
+- Add `_upgradeDB` migration to add missing columns:
+  - `sync_meta`: `linked_username`, `linked_mobile`, `linked_email`, `linked_mosque_name`
+  - `slideshow_settings`: `overlay_corner`, `overlay_size_percent`
+- Fix `device_id` seed: generate real UUID on first launch using `uuid` package
+
+---
+
+### 2. Supabase Sync Service — Account Management
+
+#### [MODIFY] [supabase_sync_service.dart](file:///c:/DATA_02/masjid-azan-times/tv_app/lib/supabase_sync_service.dart)
+Add these missing methods (mirrors SyncService.js):
+- `linkAccount(identifier, password)` — query `admin_users`, load `mosque_configs`, save to local DB
+- `registerAccount({mosqueName, username, mobile, email, password})` — insert tenant + user + config
+- `disconnectAccount()` — clear tenant_id and linked_* fields
+- `pushConfigToCloud(Map configJson)` — fetch current version, upsert to `mosque_configs`
+- `startRealtimeSubscription(tenantId)` — Supabase channel for live config push
+
+---
+
+### 3. Flutter Settings Screen (in-app overlay)
+
+#### [NEW] [settings_screen.dart](file:///c:/DATA_02/masjid-azan-times/tv_app/lib/settings_screen.dart)
+Full-screen settings overlay with tabs matching web:
+- **General** — mosque name, arabic name, tenant_id
+- **Location & Calc** — lat/lng, timezone, calculation method, asr method
+- **Prayer Offsets** — adhan offset + iqamah wait per prayer
+- **Slideshow & Jumu'ah** — enable/disable, modes (full/split/corner), duration, pause timings, slide upload (base64)
+- **System** — 24h format, arabic labels, audio, PIN change
+- **☁️ Cloud Account** — link/register/disconnect (same as web)
+- PIN keypad guard on open
+
+---
+
+### 4. Slideshow Widget
+
+#### [NEW] [slideshow_panel.dart](file:///c:/DATA_02/masjid-azan-times/tv_app/lib/slideshow_panel.dart)
+- Load `slide_assets` from DB (base64 or remote_url)
+- Fade transition between images
+- Respects `duration_per_image_seconds`
+
+---
+
+### 5. Main TV Display — Slideshow Integration
+
+#### [MODIFY] [main_tv_display.dart](file:///c:/DATA_02/masjid-azan-times/tv_app/lib/main_tv_display.dart)
+- Load all config from DB (slideshow_settings, slide_assets, announcements, features)
+- Implement display modes:
+  - `full_screen`: slideshow takes over during IDLE, mini-clock overlay
+  - `split_screen`: prayer table left / slideshow right (50/50)
+  - `corner_overlay`: prayer+clock normal, slideshow in corner widget
+- Pause slideshow during ADHAN_TIME / IQAMAH_COUNTDOWN
+- Open settings on long-press or double-tap (like web double-click)
+
+---
+
+### 6. Ticker Bar — Dynamic Announcements
+
+#### [MODIFY] [main_tv_display.dart](file:///c:/DATA_02/masjid-azan-times/tv_app/lib/main_tv_display.dart)
+- Load `announcements` from DB
+- Scroll through announcements (marquee-style)
+
+---
+
+### 7. Device ID Fix
+
+#### [MODIFY] [database_helper.dart](file:///c:/DATA_02/masjid-azan-times/tv_app/lib/database_helper.dart)
+- Add `uuid` package to pubspec
+- Generate UUID on first seed, not hardcoded string
+
+---
+
+### 8. pubspec.yaml
+
+#### [MODIFY] [pubspec.yaml](file:///c:/DATA_02/masjid-azan-times/tv_app/pubspec.yaml)
+- Add `uuid: ^4.0.0`
+- Add `image_picker: ^1.0.0` (for slide upload on mobile/desktop)
+
+---
+
+## Verification Plan
+
+### Manual
+- Register new account → check Supabase `tenants` + `admin_users` rows created
+- Link existing account → config pulls and displays on TV
+- Change slideshow mode (full/split/corner) → verify layout changes
+- Upload slide image → appears in slideshow
+- Announcements from DB → scroll in ticker
+- Disconnect → tenant_id cleared, sync stops

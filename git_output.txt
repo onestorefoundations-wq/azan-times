@@ -1,0 +1,9 @@
+Access is denied.
+fatal: unable to get current working directory: Permission denied
+fatal: Unable to read current working directory: Permission denied
+fatal: Unable to read current working directory: Permission denied
+fatal: Unable to read current working directory: Permission denied
+fatal: Unable to read current working directory: Permission denied
+fatal: Unable to read current working directory: Permission denied
+fatal: Unable to read current working directory: Permission denied
+fatal: Unable to read current working directory: Permission denied

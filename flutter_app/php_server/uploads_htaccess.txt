@@ -1,0 +1,21 @@
+# Upload this file as: .htaccess
+# Place it inside the "uploads" folder on your server:
+# /softwares/general_upload/masjidazan/uploads/.htaccess
+#
+# This tells Apache to send CORS headers with every image file.
+# Flutter web (CanvasKit) requires this to load cross-origin images onto canvas.
+
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Authorization, Content-Type"
+</IfModule>
+
+# Also enable caching so images load fast after first request
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpeg "access plus 7 days"
+    ExpiresByType image/png  "access plus 7 days"
+    ExpiresByType image/webp "access plus 7 days"
+    ExpiresByType image/gif  "access plus 7 days"
+</IfModule>

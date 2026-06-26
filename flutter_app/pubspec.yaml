@@ -1,0 +1,80 @@
+name: masjid_app_by_pro26
+description: "Islamic Digital Signage System - Masjid Prayer Time Display"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # ── Prayer time calculation ──────────────────────────────
+  adhan: ^2.0.0
+  hijri: ^3.0.1              # Hijri calendar date display
+  timezone: ^0.9.4           # Timezone-aware prayer time display
+
+  # ── Local storage ────────────────────────────────────────
+  shared_preferences: ^2.2.0
+  path_provider: ^2.1.4      # App documents dir (slideshow images)
+
+  # ── State management ─────────────────────────────────────
+  provider: ^6.0.5
+
+  # ── Supabase & networking ─────────────────────────────────
+  supabase_flutter: ^2.7.0   # Supabase client + realtime
+  connectivity_plus: ^6.1.0  # Online/offline detection
+
+  # ── Device & security ────────────────────────────────────
+  uuid: ^4.4.0               # Device ID generation
+  crypto: ^3.0.3             # PIN hashing (SHA-256)
+
+  # ── Audio ────────────────────────────────────────────────
+  audioplayers: ^6.1.0       # Adhan/beep alerts
+
+  # ── Location & maps ──────────────────────────────────────
+  geolocator: ^13.0.1        # GPS "Get My Location"
+  flutter_map: ^8.3.0        # OpenStreetMap map picker
+  latlong2: ^0.9.0           # Coordinates model for flutter_map
+
+  # ── File picker ──────────────────────────────────────────
+  file_picker: ^12.0.0-beta.7        # Slideshow image selection
+
+  # ── UI utilities ─────────────────────────────────────────
+  intl: ^0.20.2
+  marquee: ^2.2.3
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter:
+  generate: true
+  uses-material-design: true
+  assets:
+    - assets/audio/
+    - assets/icon/
+
+  # fonts:  ← uncomment and add entries after dropping .ttf files in assets/fonts/
+  # Recommended: Amiri (Arabic), NotoNaskhArabic, NotoNastaliqUrdu, NotoSansBengali, Cairo
+  # Example:
+  # - family: Amiri
+  #   fonts:
+  #     - asset: assets/fonts/Amiri-Regular.ttf
+  #     - asset: assets/fonts/Amiri-Bold.ttf
+  #       weight: 700
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#0F1B2D"
+  adaptive_icon_foreground: "assets/icon/icon.png"

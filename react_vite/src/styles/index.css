@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Fonts (mirrors flutter_app/assets/fonts) ──────────────────── */
+@font-face {
+  font-family: 'Amiri';
+  src: url('/fonts/Amiri-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Amiri';
+  src: url('/fonts/Amiri-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'NotoNaskhArabic';
+  src: url('/fonts/NotoNaskhArabic-VariableFont_wght.ttf') format('truetype');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'NotoNastaliqUrdu';
+  src: url('/fonts/NotoNastaliqUrdu-VariableFont_wght.ttf') format('truetype');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'NotoSansBengali';
+  src: url('/fonts/NotoSansBengali-VariableFont_wdth,wght.ttf') format('truetype');
+  font-display: swap;
+}
+
+:root {
+  /* Light theme CSS vars — defaults: Midnight Blue */
+  --bg:      #0D1B2A;
+  --surface: #16263A;
+  --accent:  #00D4AA;
+  --text:    #E8F4FD;
+
+  /* Component-level text vars read by resolvedColors() */
+  --c-primary:    #FFFFFF;
+  --c-secondary:  #00D4AA;
+  --c-prayer-name:#B8D4E8;
+  --c-prayer-time:#B8D4E8;
+  --c-date:       #7FA8C4;
+  --c-ticker:     #00D4AA;
+  --c-ticker-bg:  #07121E;
+
+  font-family: 'Roboto', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.2;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.4s ease, color 0.3s ease;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Hide scrollbars on the signage display but keep them inside settings */
+#root {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ── Marquee ticker animation ──────────────────────────────────── */
+@keyframes marquee-scroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(var(--marquee-shift, -50%));
+  }
+}
+
+/* ── Adhan overlay pulse glow ──────────────────────────────────── */
+@keyframes pulse-glow {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ── Slideshow crossfade ───────────────────────────────────────── */
+@keyframes slide-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Tabular figures for clocks/countdowns */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Forced-orientation root rotation fallback (kiosk) */
+.force-portrait,
+.force-landscape {
+  transform-origin: center center;
+}

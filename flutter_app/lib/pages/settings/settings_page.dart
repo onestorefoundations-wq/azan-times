@@ -17,6 +17,7 @@ import 'tab_system_prefs.dart';
 import 'tab_ticker.dart';
 import 'tab_cloud_account.dart';
 import 'tab_media_library.dart';
+import 'tab_theme.dart';
 import 'settings_helpers.dart';
 
 // ═══════════════════════════════════════════════════════════════
@@ -63,6 +64,7 @@ class _SettingsPageState extends State<SettingsPage> {
     ('prayers', l10n?.tabPrayerOffsets ?? 'Prayer Offsets', Icons.schedule_outlined),
     ('slideshow_jumuah', l10n?.tabSlideshow ?? "Slideshow & Jumu'ah", Icons.slideshow_outlined),
     ('ticker', l10n?.tabTicker ?? 'Scrolling Ticker', Icons.text_fields_outlined),
+    ('themes', '🎨 Themes', Icons.palette_outlined),
     ('system', l10n?.tabSystemPrefs ?? 'System Preferences', Icons.settings_outlined),
     ('media', '🖼️ ${l10n?.tabMediaLibrary ?? 'Media Library'}', Icons.photo_library_outlined),
     ('account', '☁️ ${l10n?.tabCloud ?? 'Cloud & Sync'}', Icons.cloud_outlined),
@@ -230,8 +232,7 @@ class _SettingsPageState extends State<SettingsPage> {
           itemBuilder: (_, i) {
             final (key, label, icon) = tabs[i];
             final isActive = _activeTab == key;
-            return AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
+            return Container(
               decoration: BoxDecoration(
                 color: isActive
                     ? SettingsTheme.accentTeal.withOpacity(0.12)
@@ -396,6 +397,10 @@ class _SettingsPageState extends State<SettingsPage> {
           ticker: _draft.ticker,
           onChanged: (t) => setState(() => _draft = _draft.copyWith(ticker: t)),
         ),
+      'themes' => TabTheme(
+          meta: _draft.meta,
+          onMetaChanged: (m) => setState(() => _draft = _draft.copyWith(meta: m)),
+        ),
       'system' => TabSystemPrefs(
           features: _draft.features,
           meta: _draft.meta,
@@ -540,8 +545,7 @@ class _PinGateScreenState extends State<_PinGateScreen> {
                 SizedBox(height: isSmallHeight ? 16 : 24),
 
                 // PIN display
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
+                Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   decoration: BoxDecoration(
                     color: SettingsTheme.bgElevated,

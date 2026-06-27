@@ -320,8 +320,7 @@ class _TabMediaLibraryState extends State<TabMediaLibrary> {
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _activeCategory = key),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
+        child: Container(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
           decoration: BoxDecoration(
             color: isActive ? SettingsTheme.accentTeal.withOpacity(0.14) : SettingsTheme.bgElevated,

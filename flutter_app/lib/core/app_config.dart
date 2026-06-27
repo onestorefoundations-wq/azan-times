@@ -490,6 +490,9 @@ class SyncMeta {
   final String? prayerTimeColor;    // hex — normal adhan/iqamah time text
   final String? dateTextColor;      // hex — date/Hijri text below clock
   final String? tickerTextColor;    // hex — scrolling ticker text
+  final String? tickerBgColor;      // hex — ticker bar background
+  final String? tvBackgroundColor;  // hex — TV screen solid background (used when no image)
+  final String? themeId;            // selected theme preset id (e.g. 'midnight')
   final bool adminLightTheme; // light mode for the admin settings panel
   final bool pinEnabled;      // whether PIN gate is required to open settings
   final String? pinHash;      // SHA-256 hash of the admin PIN (synced so all devices use same PIN)
@@ -513,6 +516,9 @@ class SyncMeta {
     this.prayerTimeColor,
     this.dateTextColor,
     this.tickerTextColor,
+    this.tickerBgColor,
+    this.tvBackgroundColor,
+    this.themeId,
     this.adminLightTheme = false,
     this.pinEnabled = false,
     this.pinHash,
@@ -586,6 +592,28 @@ class SyncMeta {
     }
   }
 
+  Color get parsedTickerBgColor {
+    if (tickerBgColor == null || tickerBgColor!.isEmpty) return const Color(0xFF07121E);
+    try {
+      var hex = tickerBgColor!.replaceAll('#', '');
+      if (hex.length == 6) hex = 'FF$hex';
+      return Color(int.parse(hex, radix: 16));
+    } catch (_) {
+      return const Color(0xFF07121E);
+    }
+  }
+
+  Color get parsedTvBackgroundColor {
+    if (tvBackgroundColor == null || tvBackgroundColor!.isEmpty) return const Color(0xFF0D1B2A);
+    try {
+      var hex = tvBackgroundColor!.replaceAll('#', '');
+      if (hex.length == 6) hex = 'FF$hex';
+      return Color(int.parse(hex, radix: 16));
+    } catch (_) {
+      return const Color(0xFF0D1B2A);
+    }
+  }
+
   SyncMeta copyWith({
     String? deviceId,
     int? supabaseConfigVersion,
@@ -604,6 +632,10 @@ class SyncMeta {
     String? prayerTimeColor,
     String? dateTextColor,
     String? tickerTextColor,
+    String? tickerBgColor,
+    String? tvBackgroundColor,
+    String? themeId,
+    bool clearThemeId = false,
     bool? adminLightTheme,
     bool? pinEnabled,
     String? pinHash,
@@ -628,6 +660,9 @@ class SyncMeta {
       prayerTimeColor: prayerTimeColor ?? this.prayerTimeColor,
       dateTextColor: dateTextColor ?? this.dateTextColor,
       tickerTextColor: tickerTextColor ?? this.tickerTextColor,
+      tickerBgColor: tickerBgColor ?? this.tickerBgColor,
+      tvBackgroundColor: tvBackgroundColor ?? this.tvBackgroundColor,
+      themeId: clearThemeId ? null : (themeId ?? this.themeId),
       adminLightTheme: adminLightTheme ?? this.adminLightTheme,
       pinEnabled: pinEnabled ?? this.pinEnabled,
       pinHash: pinHash ?? this.pinHash,
@@ -656,6 +691,9 @@ class SyncMeta {
       prayerTimeColor: json['prayer_time_color'] as String?,
       dateTextColor: json['date_text_color'] as String?,
       tickerTextColor: json['ticker_text_color'] as String?,
+      tickerBgColor: json['ticker_bg_color'] as String?,
+      tvBackgroundColor: json['tv_background_color'] as String?,
+      themeId: json['theme_id'] as String?,
       adminLightTheme: json['admin_light_theme'] as bool? ?? false,
       pinEnabled: json['pin_enabled'] as bool? ?? false,
       pinHash: json['pin_hash'] as String?,
@@ -681,6 +719,9 @@ class SyncMeta {
         'prayer_time_color': prayerTimeColor,
         'date_text_color': dateTextColor,
         'ticker_text_color': tickerTextColor,
+        'ticker_bg_color': tickerBgColor,
+        'tv_background_color': tvBackgroundColor,
+        'theme_id': themeId,
         'admin_light_theme': adminLightTheme,
         'pin_enabled': pinEnabled,
         'pin_hash': pinHash,
@@ -777,6 +818,9 @@ class AppConfig {
           'prayer_time_color': meta.prayerTimeColor,
           'date_text_color': meta.dateTextColor,
           'ticker_text_color': meta.tickerTextColor,
+          'ticker_bg_color': meta.tickerBgColor,
+          'tv_background_color': meta.tvBackgroundColor,
+          'theme_id': meta.themeId,
           'display_orientation': meta.displayOrientation,
           'admin_light_theme': meta.adminLightTheme,
           'pin_enabled': meta.pinEnabled,
@@ -800,6 +844,9 @@ class AppConfig {
       prayerTimeColor: ds['prayer_time_color'] as String?,
       dateTextColor: ds['date_text_color'] as String?,
       tickerTextColor: ds['ticker_text_color'] as String?,
+      tickerBgColor: ds['ticker_bg_color'] as String?,
+      tvBackgroundColor: ds['tv_background_color'] as String?,
+      themeId: ds['theme_id'] as String?,
       displayOrientation: ds['display_orientation'] as String?,
       adminLightTheme: ds['admin_light_theme'] as bool?,
       pinEnabled: ds['pin_enabled'] as bool?,

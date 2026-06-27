@@ -71,7 +71,7 @@ class _TvDisplayState extends State<TvDisplay> {
     final alertMode = features.adhanAlertMode;
     final displayState = provider.displayState;
 
-    final isAlertOverlayActive = 
+    final isAlertOverlayActive =
         (displayState == DisplayState.adhanAlert || displayState == DisplayState.iqamahAlert) &&
         alertMode != 'side_panel';
 
@@ -124,14 +124,17 @@ class _TvDisplayState extends State<TvDisplay> {
                 // Background: media library (orientation-aware) → legacy config → gradient
                 LayoutBuilder(builder: (context, constraints) {
                   final isPortrait = constraints.maxHeight > constraints.maxWidth;
-                  const gradient = BoxDecoration(
+                  final bgUrl = provider.activeBgUrlForOrientation(isPortrait);
+                  // Build theme-aware background (gradient uses tvBackgroundColor → surface shade)
+                  final tvBgColor = config.meta.parsedTvBackgroundColor;
+                  final surfaceColor = Color.lerp(tvBgColor, Colors.white, 0.06) ?? tvBgColor;
+                  final themedGradient = BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                      colors: [tvBgColor, surfaceColor],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                   );
-                  final bgUrl = provider.activeBgUrlForOrientation(isPortrait);
                   if (bgUrl != null && bgUrl.isNotEmpty) {
                     if (bgUrl.startsWith('http')) {
                       return Positioned.fill(
@@ -140,7 +143,7 @@ class _TvDisplayState extends State<TvDisplay> {
                           fit: BoxFit.cover,
                           width: double.infinity,
                           height: double.infinity,
-                          errorBuilder: (_, __, ___) => Container(decoration: gradient),
+                          errorBuilder: (_, __, ___) => Container(decoration: themedGradient),
                         ),
                       );
                     } else if (bgUrl.startsWith('data:')) {
@@ -161,7 +164,7 @@ class _TvDisplayState extends State<TvDisplay> {
                       }
                     }
                   }
-                  return Positioned.fill(child: Container(decoration: gradient));
+                  return Positioned.fill(child: Container(decoration: themedGradient));
                 }),
 
                 // Main content
@@ -332,29 +335,17 @@ class _TvDisplayState extends State<TvDisplay> {
             Container(
               height: tickerH,
               width: double.infinity,
-              decoration: const BoxDecoration(
-                color: Color(0xFF0A1628),
+              decoration: BoxDecoration(
+                color: config.meta.parsedTickerBgColor,
                 border: Border(
-                  top: BorderSide(color: Color(0xFF1E293B), width: 1.5),
+                  top: BorderSide(color: Colors.white.withOpacity(0.07), width: 1.5),
                 ),
               ),
-              child: Marquee(
-                text: config.ticker.messages.join('        •        '),
-                style: TextStyle(
-                  fontSize: tickerFontSize,
-                  fontWeight: FontWeight.w600,
-                  color: config.meta.parsedTickerTextColor,
-                  letterSpacing: 0.3,
-                ),
-                scrollAxis: Axis.horizontal,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                blankSpace: 120.0,
-                velocity: config.ticker.speed.toDouble(),
-                pauseAfterRound: const Duration(seconds: 1),
-                showFadingOnlyWhenScrolling: true,
-                fadingEdgeStartFraction: 0.06,
-                fadingEdgeEndFraction: 0.06,
-                startPadding: 16.0,
+              child: _TickerMarquee(
+                messages: config.ticker.messages,
+                speed: config.ticker.speed,
+                fontSize: tickerFontSize,
+                color: config.meta.parsedTickerTextColor,
               ),
             ),
           ],
@@ -427,6 +418,53 @@ class _TvDisplayState extends State<TvDisplay> {
   }
 }
 
+// ── Smooth scrolling ticker marquee ──────────────────────────
+
+class _TickerMarquee extends StatefulWidget {
+  final List<String> messages;
+  final int speed;
+  final double fontSize;
+  final Color color;
+
+  const _TickerMarquee({
+    required this.messages,
+    required this.speed,
+    required this.fontSize,
+    required this.color,
+  });
+
+  @override
+  State<_TickerMarquee> createState() => _TickerMarqueeState();
+}
+
+class _TickerMarqueeState extends State<_TickerMarquee> {
+  @override
+  Widget build(BuildContext context) {
+    return Marquee(
+      key: ValueKey('${widget.speed}_${widget.messages.length}'),
+      text: widget.messages.join('          \u2022          '),
+      style: TextStyle(
+        fontSize: widget.fontSize,
+        fontWeight: FontWeight.w600,
+        color: widget.color,
+        letterSpacing: 0.3,
+      ),
+      scrollAxis: Axis.horizontal,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      blankSpace: MediaQuery.of(context).size.width,
+      velocity: widget.speed.toDouble(),
+      pauseAfterRound: Duration.zero,
+      accelerationDuration: Duration.zero,
+      decelerationDuration: Duration.zero,
+      showFadingOnlyWhenScrolling: false,
+      fadingEdgeStartFraction: 0.0,
+      fadingEdgeEndFraction: 0.0,
+      startPadding: 0.0,
+      numberOfRounds: null,
+    );
+  }
+}
+
 // ── Mini clock overlay shown during full-screen slideshow ─────
 
 class _MiniClockOverlay extends StatefulWidget {
@@ -489,5 +527,3 @@ class _MiniClockOverlayState extends State<_MiniClockOverlay> {
     );
   }
 }
-
-

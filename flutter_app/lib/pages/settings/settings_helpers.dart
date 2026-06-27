@@ -403,8 +403,7 @@ class _ColorSwatchPickerState extends State<ColorSwatchPicker> {
                 },
                 child: Tooltip(
                   message: name,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
+                  child: Container(
                     width: 32,
                     height: 32,
                     decoration: BoxDecoration(
@@ -454,8 +453,7 @@ class _ColorSwatchPickerState extends State<ColorSwatchPicker> {
               ),
               const SizedBox(width: 10),
               // Live preview swatch
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
+              Container(
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(

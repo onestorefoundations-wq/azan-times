@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { useAppStore } from './store/appStore';
 import { isRtl } from './i18n';
 import { useIsPortrait } from './hooks/useOrientation';
+import { useAppUpdate } from './hooks/useAppUpdate';
 import { AudioService } from './core/audioService';
 import TvDisplay from './pages/TvDisplay';
 import { initTheme } from './theme';
@@ -140,6 +141,7 @@ export default function App() {
   }, []);
 
   useDocumentLocale();
+  useAppUpdate(); // auto-reload when a new build is deployed
 
   return (
     <BrowserRouter>

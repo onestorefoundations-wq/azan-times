@@ -354,7 +354,12 @@ export const jumuahSettingsToJson = (j: JumuahSettings): Json => ({
 // SyncMeta (device-local; display fields synced via display_settings)
 // ═══════════════════════════════════════════════════════════════
 
-export type DisplayOrientation = 'auto' | 'landscape' | 'portrait';
+export type DisplayOrientation =
+  | 'auto'
+  | 'landscape'
+  | 'landscape-flip'
+  | 'portrait'
+  | 'portrait-flip';
 
 export interface SyncMeta {
   deviceId: string | null;
@@ -378,6 +383,7 @@ export interface SyncMeta {
   pinHash: string | null;
   backgroundImages: string[];
   activeBackgroundMediaId: string | null;
+  showOrientationFab: boolean;
 }
 
 export const defaultSyncMeta = (): SyncMeta => ({
@@ -402,6 +408,7 @@ export const defaultSyncMeta = (): SyncMeta => ({
   pinHash: null,
   backgroundImages: [],
   activeBackgroundMediaId: null,
+  showOrientationFab: true,
 });
 
 export const syncMetaFromJson = (j: Json): SyncMeta => ({
@@ -426,6 +433,7 @@ export const syncMetaFromJson = (j: Json): SyncMeta => ({
   pinHash: strOrNull(j.pin_hash),
   backgroundImages: Array.isArray(j.background_images) ? (j.background_images as string[]) : [],
   activeBackgroundMediaId: strOrNull(j.active_background_media_id),
+  showOrientationFab: bool(j.show_orientation_fab, true),
 });
 
 export const syncMetaToJson = (m: SyncMeta): Json => ({
@@ -450,6 +458,7 @@ export const syncMetaToJson = (m: SyncMeta): Json => ({
   pin_hash: m.pinHash,
   background_images: m.backgroundImages,
   active_background_media_id: m.activeBackgroundMediaId,
+  show_orientation_fab: m.showOrientationFab,
 });
 
 // ── Color resolution (hex → CSS color string, with Flutter defaults) ──
@@ -544,6 +553,7 @@ export const appConfigToCloudJson = (c: AppConfig): Json => ({
     pin_hash: c.meta.pinHash,
     background_images: c.meta.backgroundImages,
     active_background_media_id: c.meta.activeBackgroundMediaId,
+    show_orientation_fab: c.meta.showOrientationFab,
   },
 });
 
@@ -570,6 +580,7 @@ export const appConfigFromCloudJson = (j: Json, localMeta?: SyncMeta): AppConfig
     pinHash: strOrNull(ds.pin_hash) ?? base.pinHash,
     backgroundImages: Array.isArray(ds.background_images) ? (ds.background_images as string[]) : [],
     activeBackgroundMediaId: strOrNull(ds.active_background_media_id),
+    showOrientationFab: bool(ds.show_orientation_fab, base.showOrientationFab),
   };
 
   return {

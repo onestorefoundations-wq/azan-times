@@ -203,9 +203,17 @@ export default function TabSystemPrefs({
         onChange={(v) => onMetaChange({ ...meta, displayOrientation: v as SyncMeta['displayOrientation'] })}
         options={[
           { value: 'auto', label: 'Auto (Follow Device Rotation)' },
-          { value: 'landscape', label: 'Force Landscape (Recommended for TVs)' },
-          { value: 'portrait', label: 'Force Portrait' },
+          { value: 'landscape', label: 'Landscape (Recommended for TVs)' },
+          { value: 'portrait', label: 'Portrait (90° CW — vertical screen)' },
+          { value: 'portrait-flip', label: 'Portrait Flipped (90° CCW — vertical, other way)' },
+          { value: 'landscape-flip', label: 'Landscape Flipped (180° — upside-down TV)' },
         ]}
+      />
+      <SettingsToggleRow
+        label="Show Orientation Toggle Button"
+        description="Displays a floating icon on the TV screen to switch orientation without entering settings. Disable to hide it."
+        value={meta.showOrientationFab}
+        onChange={(v) => onMetaChange({ ...meta, showOrientationFab: v })}
       />
 
       <SettingsSectionHeader title="Local Admin PIN" />

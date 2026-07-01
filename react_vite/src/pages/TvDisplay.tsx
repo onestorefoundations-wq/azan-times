@@ -4,7 +4,7 @@
  * Orientation-aware background + layouts (default / full-screen / split /
  * corner-overlay), adhan overlay, ticker bar, triple-tap settings, key-dismiss.
  */
-import { CSSProperties, JSX, useEffect, useRef } from 'react';
+import { CSSProperties, JSX, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AudioService } from '../core/audioService';
 import {
@@ -12,6 +12,7 @@ import {
   slidesForOrientation,
   useAppStore,
 } from '../store/appStore';
+import type { DisplayOrientation } from '../core/appConfig';
 import { clamp, useElementSize } from '../hooks/useElementSize';
 import { useIsPortrait } from '../hooks/useOrientation';
 import { getStrings } from '../i18n';
@@ -73,7 +74,10 @@ export default function TvDisplay() {
 
   // Effective orientation: forced (device-local) overrides actual device orientation.
   const forced = config.meta.displayOrientation;
-  const isPortrait = forced === 'auto' ? devicePortrait : forced === 'portrait';
+  const isPortrait =
+    forced === 'auto'
+      ? devicePortrait
+      : forced === 'portrait' || forced === 'portrait-flip';
 
   const features = config.features;
   const slideshow = config.slideshow;
@@ -150,6 +154,11 @@ export default function TvDisplay() {
       >
         ⚙
       </button>
+
+      {/* Orientation toggle FAB — hidden when admin disables it */}
+      {config.meta.showOrientationFab && (
+        <OrientationFab current={config.meta.displayOrientation} />
+      )}
     </div>
   );
 }
@@ -284,5 +293,126 @@ function MainLayout(props: LayoutProps) {
       <div className="min-h-0 flex-1">{body}</div>
       {tickerEnabled && <Ticker config={config} heightPx={tickerH} />}
     </div>
+  );
+}
+
+// ── Floating orientation toggle FAB ───────────────────────────
+//
+// Cycles through all 4 forced orientations (skips 'auto' — that lives in
+// settings). Each tap moves to the next mode, wrapping around.
+//
+//   landscape  → portrait → portrait-flip → landscape-flip → landscape → …
+//
+// The icon rotates visually to show which way the screen is being turned.
+
+const ORIENTATION_CYCLE: DisplayOrientation[] = [
+  'landscape',
+  'portrait',
+  'portrait-flip',
+  'landscape-flip',
+];
+
+// Rotation of the icon itself so it visually indicates the screen direction.
+const ICON_ROTATE: Record<DisplayOrientation, number> = {
+  auto: 0,
+  landscape: 0,
+  portrait: 90,
+  'portrait-flip': 270,
+  'landscape-flip': 180,
+};
+
+const ORIENTATION_LABELS: Record<DisplayOrientation, string> = {
+  auto: 'Auto',
+  landscape: 'Landscape',
+  'landscape-flip': 'Landscape (flipped)',
+  portrait: 'Portrait',
+  'portrait-flip': 'Portrait (flipped)',
+};
+
+function OrientationFab({ current }: { current: DisplayOrientation }) {
+  const config = useAppStore((s) => s.config);
+  const saveConfig = useAppStore((s) => s.saveConfig);
+  const [tooltip, setTooltip] = useState(false);
+
+  const next = () => {
+    const idx = ORIENTATION_CYCLE.indexOf(current);
+    // If current is 'auto' (set via settings), start cycle from 'landscape'
+    const nextOrientation =
+      idx === -1
+        ? ORIENTATION_CYCLE[0]
+        : ORIENTATION_CYCLE[(idx + 1) % ORIENTATION_CYCLE.length];
+    void saveConfig({ ...config, meta: { ...config.meta, displayOrientation: nextOrientation } });
+  };
+
+  const deg = ICON_ROTATE[current] ?? 0;
+
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        next();
+      }}
+      onMouseEnter={() => setTooltip(true)}
+      onMouseLeave={() => setTooltip(false)}
+      style={{
+        position: 'absolute',
+        bottom: 56,
+        right: 16,
+        width: 40,
+        height: 40,
+        borderRadius: '50%',
+        background: 'rgba(0,0,0,0.3)',
+        border: '1px solid rgba(255,255,255,0.3)',
+        color: 'rgba(255,255,255,0.85)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        opacity: 0.35,
+        transition: 'opacity 0.2s',
+        padding: 0,
+      }}
+      onMouseOver={(e) => (e.currentTarget.style.opacity = '1')}
+      onMouseOut={(e) => (e.currentTarget.style.opacity = '0.35')}
+      onFocus={(e) => (e.currentTarget.style.opacity = '1')}
+      onBlur={(e) => (e.currentTarget.style.opacity = '0.35')}
+      aria-label={`Orientation: ${ORIENTATION_LABELS[current]} — tap to change`}
+    >
+      {/* Phone/screen icon rotated to show orientation */}
+      <svg
+        width="22"
+        height="22"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ transform: `rotate(${deg}deg)`, transition: 'transform 0.3s ease' }}
+      >
+        <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+        <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none" />
+      </svg>
+
+      {tooltip && (
+        <span
+          style={{
+            position: 'absolute',
+            right: 44,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            background: 'rgba(0,0,0,0.75)',
+            color: '#fff',
+            fontSize: 11,
+            padding: '4px 10px',
+            borderRadius: 6,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+          }}
+        >
+          {ORIENTATION_LABELS[current]}
+        </span>
+      )}
+    </button>
   );
 }

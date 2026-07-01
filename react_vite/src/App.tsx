@@ -23,42 +23,73 @@ function useDocumentLocale() {
 }
 
 /**
- * Forces display orientation for kiosk/TV use. Tries the Screen Orientation
- * API (works in fullscreen on supported devices) and falls back to a CSS
- * rotation so a portrait device can drive a landscape TV layout and vice-versa.
+ * Applies a CSS rotation so the content always fills the physical screen,
+ * regardless of how the device is oriented or what orientation is forced.
+ *
+ * Rotation rules (transform-origin: top left):
+ *   landscape  on portrait  device → CW  90°: translateX(100vw) rotate(90deg)
+ *   portrait   on landscape device → CW  90°: translateX(100vw) rotate(90deg)
+ *   portrait-flip on landscape     → CCW 90°: translateY(100vh) rotate(-90deg)
+ *   landscape-flip on portrait     → CCW 90°: translateY(100vh) rotate(-90deg)
+ *   *-flip on matching device      → 180°:   translate(100%,100%) rotate(180deg)
+ *   everything else                → no transform
+ *
+ * Math verified: container is always 100vh × 100vw (swapped) for 90° cases,
+ * and 100vw × 100vh (normal) for the 180° flip case.
  */
+function orientationStyle(
+  forced: import('./core/appConfig').DisplayOrientation,
+  devicePortrait: boolean,
+): React.CSSProperties | null {
+  if (forced === 'auto') return null;
+
+  const wantsPortrait = forced === 'portrait' || forced === 'portrait-flip';
+  const wantsFlip = forced === 'portrait-flip' || forced === 'landscape-flip';
+  const deviceMatchesContent = wantsPortrait === devicePortrait;
+
+  if (!wantsFlip && deviceMatchesContent) return null; // already correct, no rotation needed
+
+  if (deviceMatchesContent) {
+    // Same axis, just flipped 180°. Container keeps original dimensions.
+    return {
+      position: 'fixed', top: 0, left: 0,
+      width: '100vw', height: '100vh',
+      transformOrigin: 'top left',
+      transform: 'translate(100%, 100%) rotate(180deg)',
+      overflow: 'hidden',
+    };
+  }
+
+  // 90° rotation needed. Container swaps vw/vh so content fills the screen.
+  const transform = wantsFlip
+    ? 'translateY(100vh) rotate(-90deg)'  // CCW
+    : 'translateX(100vw) rotate(90deg)';  // CW
+
+  return {
+    position: 'fixed', top: 0, left: 0,
+    width: '100vh', height: '100vw',
+    transformOrigin: 'top left',
+    transform,
+    overflow: 'hidden',
+  };
+}
+
 function ForcedOrientation({ children }: { children: React.ReactNode }) {
   const forced = useAppStore((s) => s.config.meta.displayOrientation);
   const devicePortrait = useIsPortrait();
 
+  // Try native orientation lock (works in fullscreen on Android Chrome).
   useEffect(() => {
     if (forced === 'auto') return;
+    const axis = forced === 'landscape' || forced === 'landscape-flip' ? 'landscape' : 'portrait';
     const so = (screen as any).orientation;
-    if (so?.lock) so.lock(forced === 'landscape' ? 'landscape' : 'portrait').catch(() => {});
+    if (so?.lock) so.lock(axis).catch(() => {});
   }, [forced]);
 
-  const mismatch =
-    (forced === 'landscape' && devicePortrait) || (forced === 'portrait' && !devicePortrait);
+  const style = orientationStyle(forced, devicePortrait);
+  if (!style) return <>{children}</>;
 
-  if (!mismatch) return <>{children}</>;
-
-  // Rotate 90° CW and swap dimensions so children fill the screen.
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100vh',
-        height: '100vw',
-        transformOrigin: 'top left',
-        transform: 'rotate(90deg) translateY(-100vh)',
-        overflow: 'hidden',
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div style={style}>{children}</div>;
 }
 
 /** One-time "tap to enable sound" hint (browsers block autoplay until a gesture). */

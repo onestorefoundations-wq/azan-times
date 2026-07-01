@@ -20,10 +20,11 @@ import TabTicker from './TabTicker';
 import TabSystemPrefs from './TabSystemPrefs';
 import TabMediaLibrary from './TabMediaLibrary';
 import TabCloudAccount from './TabCloudAccount';
+import TabAppInfo from './TabAppInfo';
 
 type TabKey =
   | 'general' | 'location' | 'prayers' | 'slideshow_jumuah'
-  | 'ticker' | 'system' | 'media' | 'account';
+  | 'ticker' | 'system' | 'media' | 'account' | 'app';
 
 const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'general', label: 'General Info', icon: '🕌' },
@@ -34,6 +35,7 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'system', label: 'System Preferences', icon: '⚙️' },
   { key: 'media', label: 'Media Library', icon: '🖼️' },
   { key: 'account', label: 'Cloud & Sync', icon: '☁️' },
+  { key: 'app', label: 'App & Updates', icon: '📲' },
 ];
 
 // 5-minute auth memory across opens, matching SettingsPage.lastAuthTime.
@@ -165,6 +167,7 @@ export default function SettingsPage() {
             {activeTab === 'account' && (
               <TabCloudAccount onConfigRefreshed={() => setDraft(useAppStore.getState().config)} />
             )}
+            {activeTab === 'app' && <TabAppInfo />}
           </div>
         </div>
 

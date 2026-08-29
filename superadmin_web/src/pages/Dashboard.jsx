@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../supabaseClient';
+import { supabase, FUNCTIONS_URL, SUPABASE_ANON_KEY } from '../supabaseClient';
+import { AuthSession } from '../authSession';
 
 export default function Dashboard() {
   const [devices, setDevices] = useState([]);
@@ -11,19 +12,13 @@ export default function Dashboard() {
   // Config States
   const [config, setConfig] = useState(null);
   const [configId, setConfigId] = useState(null);
+  // What the cloud held when this config was loaded, so a save can push only
+  // the sections actually edited instead of stamping the whole document.
+  const [loadedConfig, setLoadedConfig] = useState(null);
   const [configVersion, setConfigVersion] = useState(1);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [activeTab, setActiveTab] = useState('profile');
   const [uploading, setUploading] = useState(false);
-
-  // PHP Upload URL State (editable by admin)
-  const [phpUploadUrl, setPhpUploadUrl] = useState(
-    localStorage.getItem('php_upload_url') || 'http://localhost:8000/uploads.php'
-  );
-
-  useEffect(() => {
-    localStorage.setItem('php_upload_url', phpUploadUrl);
-  }, [phpUploadUrl]);
 
   // Fetch devices
   useEffect(() => {
@@ -31,13 +26,13 @@ export default function Dashboard() {
       if (!tenantId) return;
 
       const { data, error } = await supabase
-        .from('device_registry')
+        .from('device_status')
         .select(`
           id,
           device_id,
           last_seen,
           app_version,
-          online_status,
+          is_online,
           tenant_id,
           tenants ( name )
         `)
@@ -72,6 +67,7 @@ export default function Dashboard() {
         setConfigId(data.id);
         setConfigVersion(data.config_version);
         setConfig(data.config_json);
+        setLoadedConfig(data.config_json);
       } else {
         // Fallback seed if config row doesn't exist
         const defaultConfig = {
@@ -139,6 +135,7 @@ export default function Dashboard() {
           setConfigId(newRow.id);
           setConfigVersion(1);
           setConfig(newRow.config_json);
+          setLoadedConfig(newRow.config_json);
         }
       }
     } catch (err) {
@@ -179,11 +176,14 @@ export default function Dashboard() {
       for (const file of files) {
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('filename', file.name);
+        formData.append('category', 'slide_general');
 
-        const res = await fetch(phpUploadUrl, {
+        const res = await fetch(`${FUNCTIONS_URL}/media-proxy`, {
           method: 'POST',
           headers: {
-            'Authorization': 'Bearer EverY0NeKnoW$1T'
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${AuthSession.getToken()}`
           },
           body: formData
         });
@@ -191,7 +191,7 @@ export default function Dashboard() {
         if (!res.ok) throw new Error(`Upload returned status ${res.status}`);
 
         const data = await res.json();
-        if (data.success && data.url) {
+        if (data.url) {
           const newAsset = {
             id: Date.now() + Math.floor(Math.random() * 1000), // temp local numeric ID
             filename: file.name,
@@ -210,7 +210,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error(err);
-      alert(`Upload failed: ${err.message}. Please check CORS policies, ensure your PHP uploads.php server is running at the configured URL, and accepts authorization headers.`);
+      alert(`Upload failed: ${err.message}. Check that the media-proxy Edge Function is deployed and that ALLOWED_ORIGINS includes this dashboard's origin.`);
     } finally {
       setUploading(false);
     }
@@ -257,27 +257,41 @@ export default function Dashboard() {
       }
     };
 
-    const nextVersion = configVersion + 1;
-    const { error } = await supabase
-      .from('mosque_configs')
-      .update({
-        config_version: nextVersion,
-        config_json: cleanConfig,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', configId);
+    // Push only the sections that changed. Stamping the whole document made
+    // every TV re-pull everything and let two admins overwrite each other's
+    // unrelated edits; the server merges section-wise and bumps each section's
+    // own version.
+    const baseline = loadedConfig ?? {};
+    const sections = {};
+    for (const key of Object.keys(cleanConfig)) {
+      if (JSON.stringify(cleanConfig[key]) !== JSON.stringify(baseline[key])) {
+        sections[key] = cleanConfig[key];
+      }
+    }
+
+    if (Object.keys(sections).length === 0) {
+      alert('No changes to save.');
+      return;
+    }
+
+    const { data: result, error } = await supabase.rpc('push_config_sections', {
+      p_tenant_id: tenantId,
+      p_sections: sections,
+      p_device_id: 'superadmin_web',
+    });
 
     if (error) {
       alert(`Error updating config: ${error.message}`);
     } else {
-      setConfigVersion(nextVersion);
-      alert(`Configuration updated successfully! Version is now ${nextVersion}. Connected TV screens will update automatically.`);
+      setConfigVersion(result.config_version);
+      setLoadedConfig(result.config_json);
+      setConfig(result.config_json);
+      alert(`Saved ${Object.keys(sections).length} section(s). Version is now ${result.config_version}. Connected TV screens will update automatically.`);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('tenant_id');
-    localStorage.removeItem('username');
+    AuthSession.clear();
     window.location.reload();
   };
 
@@ -575,8 +589,8 @@ export default function Dashboard() {
                     <div><strong>Last Heartbeat:</strong> {new Date(device.last_seen).toLocaleString()}</div>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className={`device-status ${device.online_status ? 'status-online' : 'status-offline'}`}>
-                      {device.online_status ? 'ONLINE' : 'OFFLINE'}
+                    <span className={`device-status ${device.is_online ? 'status-online' : 'status-offline'}`}>
+                      {device.is_online ? 'ONLINE' : 'OFFLINE'}
                     </span>
                     <button className="btn-action btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={handleToggleView}>
                       Configure
@@ -826,21 +840,8 @@ export default function Dashboard() {
 
                         {/* Image file manager inside account linking to PHP Upload folder */}
                         <div style={{ marginTop: '25px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '20px' }}>
-                          <h4 style={{ color: '#00d4aa', margin: '0 0 15px', fontSize: '15px' }}>Upload Slide Announcements (PHP Image Uploads)</h4>
+                          <h4 style={{ color: '#00d4aa', margin: '0 0 15px', fontSize: '15px' }}>Upload Slide Announcements</h4>
                           
-                          <div className="form-group" style={{ marginBottom: '15px' }}>
-                            <label>PHP Server Upload Endpoint URL</label>
-                            <input 
-                              type="text" 
-                              value={phpUploadUrl} 
-                              onChange={(e) => setPhpUploadUrl(e.target.value)} 
-                              placeholder="e.g. http://localhost/masjid-azan-times/php_server/uploads.php"
-                            />
-                            <small style={{ color: 'rgba(232, 240, 254, 0.4)', fontSize: '11px' }}>
-                              This endpoint is triggered to process and upload files. Default points to your PHP environment.
-                            </small>
-                          </div>
-
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             <input 
                               type="file" 

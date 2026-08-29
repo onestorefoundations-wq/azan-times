@@ -13,7 +13,6 @@ initTheme();
 
 // Code-split the settings panel (incl. Leaflet) off the display's critical path.
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
-
 /** Applies <html dir/lang> from the configured display language. */
 function useDocumentLocale() {
   const lang = useAppStore((s) => s.config.features.displayLanguage);

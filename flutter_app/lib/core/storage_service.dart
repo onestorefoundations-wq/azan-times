@@ -21,6 +21,8 @@ class StorageService {
   static const _kLocalAdminPinHash = 'local_admin_pin_hash';
   static const _kDeviceId = 'device_id';
   static const _kPinEnabled = 'local_admin_pin_enabled';
+  static const _kDirtySections = 'dirty_config_sections';
+  static const _kSectionVersions = 'config_section_versions';
 
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -142,6 +144,68 @@ class StorageService {
   /// Enable or disable the local PIN gate.
   static Future<void> setPinEnabled(bool enabled) async {
     await _prefs.setBool(_kPinEnabled, enabled);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Section sync state
+  //
+  // `dirtySections` lists cloud sections edited on this device that have not
+  // reached the cloud yet. It survives a restart, so an edit made offline is
+  // pushed on the next sync instead of being stranded -- previously the push
+  // threw, the version never advanced, and the next sync saw local == remote
+  // and did nothing.
+  //
+  // `sectionVersions` is what this device last saw for each section, compared
+  // section-by-section against the cloud so a device that has been offline for
+  // a week only takes the sections that actually moved.
+  // ─────────────────────────────────────────────────────────────
+
+  static List<String> getDirtySections() {
+    final raw = _prefs.getString(_kDirtySections);
+    if (raw == null) return const [];
+    try {
+      final parsed = jsonDecode(raw);
+      return parsed is List ? parsed.cast<String>() : const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static Future<void> markSectionsDirty(List<String> sections) async {
+    if (sections.isEmpty) return;
+    final merged = {...getDirtySections(), ...sections}.toList();
+    await _prefs.setString(_kDirtySections, jsonEncode(merged));
+  }
+
+  /// Clears [sections], or everything when null. Only what was actually pushed
+  /// is cleared, so anything edited while the push was in flight stays queued.
+  static Future<void> clearDirtySections([List<String>? sections]) async {
+    if (sections == null) {
+      await _prefs.remove(_kDirtySections);
+      return;
+    }
+    final remaining = getDirtySections().where((s) => !sections.contains(s)).toList();
+    if (remaining.isEmpty) {
+      await _prefs.remove(_kDirtySections);
+    } else {
+      await _prefs.setString(_kDirtySections, jsonEncode(remaining));
+    }
+  }
+
+  static Map<String, int> getSectionVersions() {
+    final raw = _prefs.getString(_kSectionVersions);
+    if (raw == null) return {};
+    try {
+      final parsed = jsonDecode(raw);
+      if (parsed is! Map) return {};
+      return parsed.map((k, v) => MapEntry(k as String, (v as num).toInt()));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<void> saveSectionVersions(Map<String, int> versions) async {
+    await _prefs.setString(_kSectionVersions, jsonEncode(versions));
   }
 
   // ─────────────────────────────────────────────────────────────

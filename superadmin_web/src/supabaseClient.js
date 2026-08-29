@@ -1,7 +1,15 @@
+/**
+ * supabaseClient.js
+ * Every request carries the tenant-scoped JWT minted by the `auth` Edge
+ * Function rather than the bare anon key, so the RLS policies added in
+ * supabase/02_security_hardening.sql can filter on its tenant_id claim.
+ */
 import { createClient } from '@supabase/supabase-js'
+import { AuthSession } from './authSession'
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from './supabaseConfig'
 
-// Replace with your actual Supabase URL and Anon Key
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'YOUR_SUPABASE_URL';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
+export { SUPABASE_URL, SUPABASE_ANON_KEY, FUNCTIONS_URL } from './supabaseConfig'
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  accessToken: async () => AuthSession.getToken() ?? SUPABASE_ANON_KEY,
+})

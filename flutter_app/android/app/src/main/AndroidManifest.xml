@@ -13,12 +13,31 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <!-- GPS is not available on TV -->
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <!-- The location permissions above implicitly require location hardware.
+         ACCESS_FINE_LOCATION implies .gps (opted out just above) and
+         ACCESS_COARSE_LOCATION implies .network; without these two the app is
+         filtered off, or refused by, TVs that have no location hardware at all. -->
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
 
 
     <application
         android:label="Masjid App by Pro26"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner">
+        <!-- Android TV launchers require a banner on a LEANBACK_LAUNCHER app.
+             Without one the app installs successfully and then never appears on
+             the home screen, which reads as a failed install. -->
+
+        <!-- Flutter 3.44 defaults to Impeller on Vulkan. Older TV GPUs (Mali-450,
+             older Amlogic parts) have absent or broken Vulkan drivers, and the
+             symptom is a black or garbled screen. Fall back to the legacy
+             renderer: slower on paper, and this display is static text and
+             images, so the tradeoff is free in practice. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

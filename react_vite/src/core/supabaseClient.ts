@@ -1,17 +1,22 @@
 /**
  * supabaseClient.ts
- * Shared Supabase client. URL + anon key are the SAME as the Flutter app
- * (flutter_app/lib/core/supabase_sync_service.dart) so both clients talk to
- * the same project and interoperate.
+ * Shared Supabase client.
+ *
+ * Every request (PostgREST, Realtime, Functions) carries the tenant-scoped JWT
+ * from AuthSession rather than the bare anon key, so the RLS policies in
+ * 02_security_hardening.sql can filter on its tenant_id claim. When no session
+ * exists the anon key is sent and the server correctly rejects everything.
  */
 import { createClient } from '@supabase/supabase-js';
+import { AuthSession } from './authSession';
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from './supabaseConfig';
 
-const SUPABASE_URL = 'https://veyrcvvvsomyrahjfvhh.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZleXJjdnZ2c29teXJhaGpmdmhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3NjI5MzUsImV4cCI6MjA5NzMzODkzNX0.-N470V130EwnrJabX1CMId8hLiaQal0g_al_eMJzQ-Q';
-
-export const APP_VERSION = '1.0.0-react';
+export { APP_VERSION, FUNCTIONS_URL, SUPABASE_ANON_KEY, SUPABASE_URL } from './supabaseConfig';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false },
+  // Third-party auth hook: supabase-js calls this before each request and uses
+  // the result as the Authorization bearer, including for realtime socket
+  // re-auth. Supplying it disables the built-in Supabase Auth client, which we
+  // do not use.
+  accessToken: async () => AuthSession.getToken() ?? SUPABASE_ANON_KEY,
 });

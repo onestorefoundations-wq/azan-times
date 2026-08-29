@@ -3,11 +3,10 @@
 /// Handles: link account, register, disconnect, push/pull config,
 /// realtime subscription, periodic sync, and device heartbeat.
 ///
-/// ⚠️ SECURITY NOTE: The current auth approach does a direct table query
-/// comparing password to password_hash. This is the same method used in
-/// the web client (SyncService.js) and the existing live system.
-/// For production hardening, replace with a Supabase Edge Function RPC
-/// for login that never exposes password_hash to the client.
+/// Auth runs through the `auth` Edge Function (supabase/functions/auth): the
+/// client posts credentials, gets back a tenant-scoped JWT, and every Supabase
+/// call after that is filtered by the RLS policies in
+/// supabase/02_security_hardening.sql. The client never reads admin_users.
 
 import 'dart:async';
 import 'dart:developer' as dev;
@@ -19,6 +18,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'storage_service.dart';
+import 'auth_session.dart';
 import 'device_service.dart';
 
 // ─────────────────────────────────────────────────────────────
@@ -41,7 +41,12 @@ class SupabaseSyncService {
   static const String _supabaseUrl = 'https://veyrcvvvsomyrahjfvhh.supabase.co';
   static const String _supabaseAnonKey =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZleXJjdnZ2c29teXJhaGpmdmhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3NjI5MzUsImV4cCI6MjA5NzMzODkzNX0.-N470V130EwnrJabX1CMId8hLiaQal0g_al_eMJzQ-Q';
-  static const String _appVersion = '1.0.0-flutter';
+  static const String _appVersion = '1.1.0-flutter';
+
+  /// Base URL for the Edge Functions. Media uploads and deletes go through
+  /// `media-proxy` so the PHP server's shared key stays off the device.
+  static String get functionsUrl => '$_supabaseUrl/functions/v1';
+  static String get anonKey => _supabaseAnonKey;
 
   static SupabaseClient? _client;
   static Timer? _syncTimer;
@@ -56,7 +61,15 @@ class SupabaseSyncService {
   // ─────────────────────────────────────────────────────────────
 
   static Future<void> init() async {
-    await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey); // ignore: deprecated_member_use
+    await AuthSession.init(supabaseUrl: _supabaseUrl, anonKey: _supabaseAnonKey);
+    await Supabase.initialize(
+      url: _supabaseUrl,
+      anonKey: _supabaseAnonKey,
+      // Third-party auth hook: supabase_flutter calls this before each request
+      // (PostgREST, Storage and realtime re-auth) and uses the result as the
+      // bearer, so RLS sees our tenant_id claim instead of the anon role.
+      accessToken: () async => AuthSession.token ?? _supabaseAnonKey,
+    );
     _client = Supabase.instance.client;
     dev.log('[Sync] Supabase initialized');
   }
@@ -133,6 +146,7 @@ class SupabaseSyncService {
       await client.removeChannel(_realtimeChannel!);
       _realtimeChannel = null;
     }
+    _activeTenantId = null;
     dev.log('[Sync] Sync stopped');
   }
 
@@ -167,21 +181,37 @@ class SupabaseSyncService {
               return;
             }
 
-            if (newData.isNotEmpty && newData['config_json'] != null) {
-              final configJson = newData['config_json'] as Map<String, dynamic>;
-              final version = (newData['config_version'] as num?)?.toInt() ?? 0;
+            final remoteVersions =
+                (newData['section_versions'] as Map<String, dynamic>? ?? {})
+                    .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
+            final remoteJson = newData['config_json'] as Map<String, dynamic>? ?? {};
+            final localVersions = StorageService.getSectionVersions();
+            final dirty = StorageService.getDirtySections();
 
-              // Only apply if remote version is newer than what we last wrote
-              final currentConfig = await StorageService.loadConfig();
-              if (version > currentConfig.meta.supabaseConfigVersion) {
-                dev.log('[Sync] Applying remote version $version (local: ${currentConfig.meta.supabaseConfigVersion})');
-                await _applyConfig(configJson, version);
-                _onConfigUpdated?.call();
-                _onStatusChange?.call(SyncStatus.synced);
-              } else {
-                dev.log('[Sync] Ignored stale realtime event (version $version <= local)');
-              }
+            // Take only the sections that moved and that this device has no
+            // unpushed edit in, so somebody else's push cannot clobber a local
+            // change that syncNow has yet to send.
+            final toPull = AppConfig.configSections
+                .where((name) =>
+                    remoteJson[name] != null &&
+                    !dirty.contains(name) &&
+                    (remoteVersions[name] ?? 0) > (localVersions[name] ?? 0))
+                .toList();
+
+            if (toPull.isEmpty) {
+              dev.log('[Sync] Realtime event had nothing new for this device');
+              return;
             }
+
+            final picked = <String, dynamic>{for (final n in toPull) n: remoteJson[n]};
+            await _applySections(
+              picked,
+              remoteVersions,
+              toPull,
+              (newData['config_version'] as num?)?.toInt() ?? 0,
+            );
+            _onConfigUpdated?.call();
+            _onStatusChange?.call(SyncStatus.synced);
           },
         )
         .subscribe((status, [error]) {
@@ -216,9 +246,22 @@ class SupabaseSyncService {
       return;
     }
 
+    if (AuthSession.token == null) {
+      // Linked but the token is gone (cleared data, or linked by a build that
+      // predates token auth). Local config keeps working; sync cannot.
+      dev.log('[Sync] Linked tenant with no auth token — re-link required');
+      _onStatusChange?.call(SyncStatus.syncError);
+      return;
+    }
+
     _onStatusChange?.call(SyncStatus.syncing);
 
     try {
+      if (!await AuthSession.refreshIfNeeded()) {
+        _onStatusChange?.call(SyncStatus.syncError);
+        return;
+      }
+
       // 1. Heartbeat — update device_registry
       if (deviceId != null) {
         await client.from('device_registry').upsert({
@@ -227,43 +270,63 @@ class SupabaseSyncService {
           'last_seen': DateTime.now().toIso8601String(),
           'online_status': true,
           'app_version': _appVersion,
-        }, onConflict: 'device_id');
+        }, onConflict: 'tenant_id,device_id');
       }
 
-      // 2. Pull new config if remote version is higher
-      final localVersion = config.meta.supabaseConfigVersion;
+      // 2. Reconcile with the cloud, section by section
+      final dirty = StorageService.getDirtySections();
+      final localVersions = StorageService.getSectionVersions();
+
       final response = await client
           .from('mosque_configs')
-          .select('config_version, config_json, updated_at')
+          .select('config_version, config_json, section_versions')
           .eq('tenant_id', tenantId)
-          .order('config_version', ascending: false)
-          .limit(1)
           .maybeSingle();
 
       if (response != null) {
-        final remoteVersion = (response['config_version'] as num?)?.toInt() ?? 0;
+        // Pull only the sections that actually moved, and never one this device
+        // has an unpushed edit in. A TV offline for a week now takes the phone's
+        // new prayer times without reverting anything it never touched.
+        final remoteVersions =
+            (response['section_versions'] as Map<String, dynamic>? ?? {})
+                .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
+        final remoteJson = response['config_json'] as Map<String, dynamic>? ?? {};
 
-        if (remoteVersion > localVersion) {
-          // Remote is newer — pull
-          dev.log('[Sync] Remote version $remoteVersion > local $localVersion — pulling');
-          await _applyConfig(response['config_json'] as Map<String, dynamic>, remoteVersion);
-          _onConfigUpdated?.call();
-          _onStatusChange?.call(SyncStatus.synced);
-        } else if (localVersion > remoteVersion) {
-          // Local is newer — push
-          // ⚠️ TODO: Replace client-side increment with a Postgres RPC call
-          // (e.g., increment_config_version()) to avoid race conditions on multi-device tenants.
-          dev.log('[Sync] Local version $localVersion > remote $remoteVersion — pushing');
-          await pushConfigToCloud(config);
-          _onStatusChange?.call(SyncStatus.synced);
-        } else {
-          _onStatusChange?.call(SyncStatus.synced);
+        final toPull = <String>[];
+        for (final name in AppConfig.configSections) {
+          if (remoteJson[name] == null) continue;
+          final rv = remoteVersions[name] ?? 0;
+          final lv = localVersions[name] ?? 0;
+          if (rv <= lv) continue;
+          if (dirty.contains(name)) {
+            // Same section edited on both sides. Rare now that sections are
+            // independent; the edit made on this screen wins and we say so.
+            dev.log('[Sync] Conflict in "$name" (remote v$rv) — local edit wins');
+            continue;
+          }
+          toPull.add(name);
         }
-      } else {
-        // No remote config — push local
-        await pushConfigToCloud(config);
-        _onStatusChange?.call(SyncStatus.synced);
+
+        if (toPull.isNotEmpty) {
+          final picked = <String, dynamic>{for (final n in toPull) n: remoteJson[n]};
+          await _applySections(
+            picked,
+            remoteVersions,
+            toPull,
+            (response['config_version'] as num?)?.toInt() ?? 0,
+          );
+          _onConfigUpdated?.call();
+        }
       }
+
+      if (dirty.isNotEmpty || response == null) {
+        await pushConfigToCloud(
+          await StorageService.loadConfig(),
+          sections: response != null ? dirty : null,
+        );
+      }
+
+      _onStatusChange?.call(SyncStatus.synced);
     } catch (e) {
       dev.log('[Sync] Failed: $e');
       _onStatusChange?.call(SyncStatus.syncError);
@@ -274,63 +337,46 @@ class SupabaseSyncService {
   // Push to cloud
   // ─────────────────────────────────────────────────────────────
 
-  static Future<void> pushConfigToCloud(AppConfig config) async {
+  /// Pushes [sections] (default: everything) as a section-wise merge. The
+  /// server leaves every section not named here exactly as it is, so this can
+  /// never revert another device's work.
+  static Future<void> pushConfigToCloud(AppConfig config, {List<String>? sections}) async {
     final tenantId = config.profile.tenantId;
     if (tenantId == null || tenantId.isEmpty) return;
 
+    final names = (sections != null && sections.isNotEmpty)
+        ? sections
+        : AppConfig.configSections;
+    final all = config.toCloudSections();
+    final payload = <String, dynamic>{for (final n in names) n: all[n]};
+
+    final deviceId = config.meta.deviceId ?? 'unknown';
+
+    // Marked before the call and cleared only on success, so a failure at any
+    // point (offline, token rejected, process killed mid-flight) leaves a
+    // durable marker for the next syncNow.
+    await StorageService.markSectionsDirty(names);
+
     try {
-      final cloudJson = config.toCloudJson();
-      final deviceId = config.meta.deviceId ?? 'unknown';
+      final result = await client.rpc('push_config_sections', params: {
+        'p_tenant_id': tenantId,
+        'p_sections': payload,
+        'p_device_id': deviceId,
+      }) as Map<String, dynamic>?;
 
-      // Bug 4 fix: Use atomic server-side RPC instead of read-increment-write
-      // This prevents race conditions on multi-device tenants.
-      // Falls back to legacy client-side push if RPC not yet created.
-      int newVersion;
-      try {
-        final result = await client.rpc('increment_and_push_config', params: {
-          'p_tenant_id': tenantId,
-          'p_config_json': cloudJson,
-          'p_device_id': deviceId,
-        });
-        newVersion = (result as num?)?.toInt() ?? 1;
-        dev.log('[Sync] Pushed config via RPC to cloud version: $newVersion');
-      } catch (rpcError) {
-        // Fallback: RPC not yet deployed — use legacy client-side push
-        dev.log('[Sync] RPC not available, falling back to direct update: $rpcError');
-        final current = await client
-            .from('mosque_configs')
-            .select('id, config_version')
-            .eq('tenant_id', tenantId)
-            .maybeSingle();
+      final newVersion = (result?['config_version'] as num?)?.toInt() ??
+          config.meta.supabaseConfigVersion;
+      final newVersions = (result?['section_versions'] as Map<String, dynamic>? ?? {})
+          .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
 
-        newVersion = current != null
-            ? ((current['config_version'] as num?)?.toInt() ?? 0) + 1
-            : 1;
+      dev.log('[Sync] Pushed ${names.length} section(s) → version $newVersion');
 
-        if (current != null) {
-          await client.from('mosque_configs').update({
-            'config_version': newVersion,
-            'config_json': cloudJson,
-            'updated_at': DateTime.now().toIso8601String(),
-            'updated_by': deviceId,
-          }).eq('id', current['id'] as String);
-        } else {
-          await client.from('mosque_configs').insert({
-            'tenant_id': tenantId,
-            'config_version': newVersion,
-            'config_json': cloudJson,
-            'updated_by': deviceId,
-          });
-        }
-        dev.log('[Sync] Pushed config (fallback) to cloud version: $newVersion');
-      }
-
-      // Update local version to match what server confirmed
-      final updatedMeta = config.meta.copyWith(
+      await StorageService.saveSectionVersions(newVersions);
+      await StorageService.saveSyncMeta(config.meta.copyWith(
         supabaseConfigVersion: newVersion,
         lastSuccessfulSync: DateTime.now().millisecondsSinceEpoch,
-      );
-      await StorageService.saveSyncMeta(updatedMeta);
+      ));
+      await StorageService.clearDirtySections(names);
     } catch (e) {
       dev.log('[Sync] Failed to push config: $e');
       rethrow;
@@ -341,18 +387,31 @@ class SupabaseSyncService {
   // Apply remote config locally
   // ─────────────────────────────────────────────────────────────
 
-  static Future<void> _applyConfig(Map<String, dynamic> configJson, int newVersion) async {
-    final currentConfig = await StorageService.loadConfig();
+  /// Applies [picked] cloud sections onto local storage, recording the versions
+  /// this device is now in step with. Sections not named here -- and all
+  /// device-local meta -- are left exactly as they are.
+  static Future<void> _applySections(
+    Map<String, dynamic> picked,
+    Map<String, int> remoteVersions,
+    List<String> applied,
+    int configVersion,
+  ) async {
+    final current = await StorageService.loadConfig();
+    final next = current.applyCloudSections(picked);
 
-    // Build new config from cloud, preserving device-local meta
-    final updatedMeta = currentConfig.meta.copyWith(
-      supabaseConfigVersion: newVersion,
-      lastSuccessfulSync: DateTime.now().millisecondsSinceEpoch,
-    );
+    final versions = Map<String, int>.from(StorageService.getSectionVersions());
+    for (final name in applied) {
+      versions[name] = remoteVersions[name] ?? 0;
+    }
 
-    final newConfig = AppConfig.fromCloudJson(configJson, localMeta: updatedMeta);
-    await StorageService.saveConfig(newConfig);
-    dev.log('[Sync] Applied cloud config version: $newVersion');
+    await StorageService.saveConfig(next.copyWith(
+      meta: next.meta.copyWith(
+        supabaseConfigVersion: configVersion,
+        lastSuccessfulSync: DateTime.now().millisecondsSinceEpoch,
+      ),
+    ));
+    await StorageService.saveSectionVersions(versions);
+    dev.log('[Sync] Applied section(s): ${applied.join(", ")}');
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -360,48 +419,27 @@ class SupabaseSyncService {
   // ─────────────────────────────────────────────────────────────
 
   /// Links this device to an existing tenant account.
-  /// ⚠️ SECURITY: Direct table query compares password to password_hash.
-  /// Migrate to a Supabase Edge Function for production hardening.
+  /// The password is verified server-side (bcrypt, inside app_login) and we get
+  /// back a tenant-scoped JWT. Nothing here reads admin_users, and the old
+  /// string-interpolated `.or()` filter — a PostgREST filter injection — is gone.
   static Future<LinkedAccountResult> linkAccount(
       String identifier, String password) async {
-    // Query admin_users by username, mobile, or email + password
-    final userResponse = await client
-        .from('admin_users')
-        .select('tenant_id, username, mobile, email')
-        .or('username.eq."$identifier",mobile.eq."$identifier",email.eq."$identifier"')
-        .eq('password_hash', password)
-        .maybeSingle();
+    final session = await AuthSession.login(identifier, password);
+    final tenantId = session.tenantId;
 
-    if (userResponse == null) {
-      throw Exception('Invalid username/mobile/email or password');
-    }
-
-    final tenantId = userResponse['tenant_id'] as String;
-
-    // Fetch tenant name
-    final tenantResponse = await client
-        .from('tenants')
-        .select('name')
-        .eq('id', tenantId)
-        .maybeSingle();
-
-    final mosqueName = tenantResponse?['name'] as String? ?? 'Linked Mosque';
-
-    // Fetch remote config
     final configResponse = await client
         .from('mosque_configs')
-        .select('config_version, config_json')
+        .select('config_version, config_json, section_versions')
         .eq('tenant_id', tenantId)
         .maybeSingle();
 
     final currentConfig = await StorageService.loadConfig();
 
-    // Build updated meta
     final updatedMeta = currentConfig.meta.copyWith(
-      linkedUsername: userResponse['username'] as String?,
-      linkedMobile: userResponse['mobile'] as String?,
-      linkedEmail: userResponse['email'] as String?,
-      linkedMosqueName: mosqueName,
+      linkedUsername: session.username.isEmpty ? null : session.username,
+      linkedMobile: session.mobile.isEmpty ? null : session.mobile,
+      linkedEmail: session.email.isEmpty ? null : session.email,
+      linkedMosqueName: session.mosqueName,
       supabaseConfigVersion: configResponse != null
           ? (configResponse['config_version'] as num?)?.toInt() ?? 0
           : 0,
@@ -409,35 +447,40 @@ class SupabaseSyncService {
     );
 
     if (configResponse != null) {
-      // Apply remote config, overriding local
       final newConfig = AppConfig.fromCloudJson(
         configResponse['config_json'] as Map<String, dynamic>,
         localMeta: updatedMeta,
       );
-      // Ensure tenant_id is set on profile
       final profileWithTenant = newConfig.profile.copyWith(tenantId: tenantId);
       await StorageService.saveConfig(newConfig.copyWith(
         profile: profileWithTenant,
         meta: updatedMeta,
       ));
+      // Cloud state was just adopted wholesale; nothing local is outstanding.
+      await StorageService.saveSectionVersions(
+        (configResponse['section_versions'] as Map<String, dynamic>? ?? {})
+            .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0)),
+      );
+      await StorageService.clearDirtySections();
     } else {
-      // No cloud config — just update tenant_id locally
+      // Empty account: this device's existing setup becomes the account's.
       final profileWithTenant = currentConfig.profile.copyWith(tenantId: tenantId);
       await StorageService.saveConfig(currentConfig.copyWith(
         profile: profileWithTenant,
         meta: updatedMeta,
       ));
+      await StorageService.saveSectionVersions({});
+      await StorageService.markSectionsDirty(AppConfig.configSections);
     }
 
-    // Restart realtime subscription with new tenant
     _subscribeRealtime(tenantId);
 
     return LinkedAccountResult(
       tenantId: tenantId,
-      username: userResponse['username'] as String? ?? '',
-      mobile: userResponse['mobile'] as String? ?? '',
-      email: userResponse['email'] as String? ?? '',
-      mosqueName: mosqueName,
+      username: session.username,
+      mobile: session.mobile,
+      email: session.email,
+      mosqueName: session.mosqueName,
     );
   }
 
@@ -452,77 +495,49 @@ class SupabaseSyncService {
     String? mobile,
     String? email,
   }) async {
-    // Check username uniqueness
-    final existing = await client
-        .from('admin_users')
-        .select('id')
-        .eq('username', username)
-        .maybeSingle();
+    // Tenant + admin user are created together inside app_register(), which
+    // bcrypts the password. Doing it client-side previously left an orphaned
+    // tenant behind whenever the user insert failed, and stored the password
+    // verbatim in password_hash.
+    final session = await AuthSession.register(
+      mosqueName: mosqueName,
+      username: username,
+      password: password,
+      mobile: mobile,
+      email: email,
+    );
+    final tenantId = session.tenantId;
 
-    if (existing != null) {
-      throw Exception('Username already registered');
-    }
-
-    // Create tenant
-    final tenantResponse = await client
-        .from('tenants')
-        .insert({'name': mosqueName})
-        .select()
-        .single();
-
-    final tenantId = tenantResponse['id'] as String;
-
-    // Create admin user
-    // ⚠️ Password stored as-is in password_hash — migrate to hashed RPC for production.
-    final userResponse = await client
-        .from('admin_users')
-        .insert({
-          'tenant_id': tenantId,
-          'username': username,
-          'mobile': mobile,
-          'email': email,
-          'password_hash': password,
-        })
-        .select()
-        .single();
-
-    // Build initial config from current local settings
     final currentConfig = await StorageService.loadConfig();
+    final updatedMeta = currentConfig.meta.copyWith(
+      linkedUsername: session.username.isEmpty ? username : session.username,
+      linkedMobile: session.mobile.isEmpty ? null : session.mobile,
+      linkedEmail: session.email.isEmpty ? null : session.email,
+      linkedMosqueName: session.mosqueName,
+      supabaseConfigVersion: 0,
+      lastSuccessfulSync: DateTime.now().millisecondsSinceEpoch,
+    );
+
     final initialConfig = currentConfig.copyWith(
       profile: currentConfig.profile.copyWith(
         name: mosqueName,
         tenantId: tenantId,
       ),
+      meta: updatedMeta,
     );
+    await StorageService.saveConfig(initialConfig);
+    await StorageService.saveSectionVersions({});
 
-    // Push initial config to cloud
-    await client.from('mosque_configs').insert({
-      'tenant_id': tenantId,
-      'config_version': 1,
-      'config_json': initialConfig.toCloudJson(),
-    });
+    await pushConfigToCloud(initialConfig);
 
-    // Update local meta
-    final updatedMeta = currentConfig.meta.copyWith(
-      linkedUsername: userResponse['username'] as String?,
-      linkedMobile: userResponse['mobile'] as String?,
-      linkedEmail: userResponse['email'] as String?,
-      linkedMosqueName: mosqueName,
-      supabaseConfigVersion: 1,
-      lastSuccessfulSync: DateTime.now().millisecondsSinceEpoch,
-    );
-
-    await StorageService.saveConfig(initialConfig.copyWith(meta: updatedMeta));
-
-    // Start realtime subscription
     _subscribeRealtime(tenantId);
 
     return LinkedAccountResult(
       tenantId: tenantId,
-      username: userResponse['username'] as String? ?? username,
-      mobile: userResponse['mobile'] as String? ?? '',
-      email: userResponse['email'] as String? ?? '',
-      mosqueName: mosqueName,
+      username: session.username.isEmpty ? username : session.username,
+      mobile: session.mobile,
+      email: session.email,
+      mosqueName: session.mosqueName,
     );
   }
 
@@ -531,9 +546,27 @@ class SupabaseSyncService {
   // ─────────────────────────────────────────────────────────────
 
   static Future<void> disconnectAccount() async {
-    await stopSync();
-
     final currentConfig = await StorageService.loadConfig();
+    final tenantId = currentConfig.profile.tenantId;
+    final deviceId = currentConfig.meta.deviceId ?? DeviceService.getDeviceId();
+
+    // Clear the heartbeat latch while the token is still valid.
+    if (tenantId != null && tenantId.isNotEmpty && deviceId != null && AuthSession.token != null) {
+      try {
+        await client
+            .from('device_registry')
+            .update({'online_status': false})
+            .eq('tenant_id', tenantId)
+            .eq('device_id', deviceId);
+      } catch (e) {
+        dev.log('[Sync] Could not clear online_status: $e');
+      }
+    }
+
+    await stopSync();
+    await AuthSession.clear();
+    await StorageService.clearDirtySections();
+    await StorageService.saveSectionVersions({});
 
     // Clear cloud-linked fields; preserve all local settings
     final updatedProfile = currentConfig.profile.copyWith(clearTenantId: true);
@@ -573,34 +606,29 @@ class SupabaseSyncService {
   // ─────────────────────────────────────────────────────────────
 
   static Future<String> uploadImage(Uint8List bytes, String filename, String pathPrefix) async {
-    const uploadUrl = 'https://expertai.co.uk/softwares/general_upload/masjidazan/uploads.php';
-    const apiKey = r'EverY0NeKnoW$1T';
+    // Goes through the media-proxy Edge Function. The PHP server's bearer key
+    // used to be a const right here, i.e. inside the shipped APK, and its
+    // delete endpoint keys off a bare filename -- so anyone who pulled the key
+    // out of the binary could delete any mosque's media.
+    final token = AuthSession.token;
+    if (token == null) throw Exception('Not linked to a cloud account');
 
     try {
-      final request = http.MultipartRequest('POST', Uri.parse(uploadUrl));
-      request.headers['Authorization'] = 'Bearer $apiKey';
+      final request = http.MultipartRequest('POST', Uri.parse('$functionsUrl/media-proxy'));
+      request.headers['Authorization'] = 'Bearer $token';
+      request.headers['apikey'] = anonKey;
+      request.fields['filename'] = filename;
+      request.fields['category'] = pathPrefix == 'backgrounds' ? 'background' : 'slide_general';
       request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
 
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success'] == true) {
-          String rawUrl = data['url'] as String;
-          // The PHP script might return https://your-server.com/uploads/...
-          // Replace it with the actual working URL path if needed.
-          if (rawUrl.contains('your-server.com') || rawUrl.contains('expertai.co.uk')) {
-            final filename = rawUrl.split('/').last;
-            return 'https://expertai.co.uk/softwares/general_upload/masjidazan/uploads/$filename';
-          }
-          return rawUrl;
-        } else {
-          throw Exception(data['error'] ?? 'Upload failed by server');
-        }
-      } else {
-        throw Exception('Server returned ${response.statusCode}');
+      if (response.statusCode != 200) {
+        throw Exception(data['error'] ?? 'Server returned ${response.statusCode}');
       }
+      return data['url'] as String;
     } catch (e) {
       dev.log('[Sync] Upload failed: $e');
       throw Exception('Upload failed. $e');
@@ -608,9 +636,9 @@ class SupabaseSyncService {
   }
 
   static Future<void> deleteImage(String publicUrl) async {
-    // Delete API not provided in the PHP script, so we silently skip.
-    // If you add a delete endpoint later, implement it here.
-    dev.log('[Sync] Cannot delete $publicUrl because delete API is not implemented.');
+    // Deletes are keyed by media_library row id, not by URL, so the proxy can
+    // confirm the row belongs to the caller's tenant before removing anything.
+    dev.log('[Sync] deleteImage is a no-op; use MediaLibraryService.deleteFile(tenantId, fileId).');
   }
 }
 

@@ -528,18 +528,52 @@ export const appConfigFromStorageMap = (map: Json): AppConfig => ({
 });
 
 /**
- * Serialize to the Supabase config_json shape.
- * meta (device-local fields) is excluded, but display config is explicitly synced.
+ * The cloud config is split into independently versioned sections. A push
+ * carries only the sections that actually changed, so a phone editing prayer
+ * times and a TV editing the theme no longer overwrite each other, and a TV
+ * that has been offline for a week cannot revert sections it never touched.
  */
-export const appConfigToCloudJson = (c: AppConfig): Json => ({
+export const CONFIG_SECTIONS = [
+  'masjid_profile',
+  'time_adjustments',
+  'features_format',
+  'slideshow_settings',
+  'jumuah_settings',
+  'ticker_settings',
+  'display_settings',
+] as const;
+
+export type ConfigSection = (typeof CONFIG_SECTIONS)[number];
+
+export type SectionVersions = Partial<Record<ConfigSection, number>>;
+
+/**
+ * Meta fields that describe one physical screen rather than the mosque, and so
+ * never leave the device: which way this panel is mounted, the image sitting on
+ * its local disk, and the PIN protecting its own settings menu. Syncing these
+ * rotated every TV in a masjid at once and put the PIN hash in a row a public
+ * endpoint reads from.
+ */
+export const DEVICE_LOCAL_META_KEYS = [
+  'displayOrientation',
+  'showOrientationFab',
+  'customBackgroundPath',
+  'adminLightTheme',
+  'pinEnabled',
+  'pinHash',
+] as const;
+
+/** Serialize to the Supabase config_json shape, one section at a time. */
+export const appConfigToCloudSections = (c: AppConfig): Record<ConfigSection, Json> => ({
   masjid_profile: masjidProfileToJson(c.profile),
   time_adjustments: timeAdjustmentsToJson(c.adjustments),
   features_format: featuresFormatToJson(c.features),
   slideshow_settings: slideshowSettingsToJson(c.slideshow),
   jumuah_settings: jumuahSettingsToJson(c.jumuah),
   ticker_settings: tickerSettingsToJson(c.ticker),
+  // Mosque-wide presentation only. Orientation, PIN, admin theme and the local
+  // background path are deliberately absent -- see DEVICE_LOCAL_META_KEYS.
   display_settings: {
-    custom_background_path: c.meta.customBackgroundPath,
     display_font_family: c.meta.displayFontFamily,
     primary_text_color: c.meta.primaryTextColor,
     secondary_text_color: c.meta.secondaryTextColor,
@@ -547,15 +581,66 @@ export const appConfigToCloudJson = (c: AppConfig): Json => ({
     prayer_time_color: c.meta.prayerTimeColor,
     date_text_color: c.meta.dateTextColor,
     ticker_text_color: c.meta.tickerTextColor,
-    display_orientation: c.meta.displayOrientation,
-    admin_light_theme: c.meta.adminLightTheme,
-    pin_enabled: c.meta.pinEnabled,
-    pin_hash: c.meta.pinHash,
     background_images: c.meta.backgroundImages,
     active_background_media_id: c.meta.activeBackgroundMediaId,
-    show_orientation_fab: c.meta.showOrientationFab,
   },
 });
+
+export const appConfigToCloudJson = (c: AppConfig): Json =>
+  appConfigToCloudSections(c) as unknown as Json;
+
+/**
+ * Which sections differ between two configs. Drives the section-wise push, so
+ * callers never have to declare what they edited.
+ */
+export const changedSections = (a: AppConfig, b: AppConfig): ConfigSection[] => {
+  const left = appConfigToCloudSections(a);
+  const right = appConfigToCloudSections(b);
+  return CONFIG_SECTIONS.filter(
+    (name) => JSON.stringify(left[name]) !== JSON.stringify(right[name]),
+  );
+};
+
+/**
+ * Apply a subset of cloud sections onto the current config, leaving every other
+ * section — and all device-local meta — untouched.
+ */
+export const applyCloudSections = (
+  current: AppConfig,
+  sections: Partial<Record<ConfigSection, Json>>,
+): AppConfig => {
+  const next: AppConfig = { ...current, meta: { ...current.meta } };
+
+  if (sections.masjid_profile) {
+    const incoming = masjidProfileFromJson(sections.masjid_profile);
+    // tenantId is how this device knows which account it belongs to; it is not
+    // the cloud's to reassign.
+    next.profile = { ...incoming, tenantId: current.profile.tenantId };
+  }
+  if (sections.time_adjustments) next.adjustments = timeAdjustmentsFromJson(sections.time_adjustments);
+  if (sections.features_format) next.features = featuresFormatFromJson(sections.features_format);
+  if (sections.slideshow_settings) next.slideshow = slideshowSettingsFromJson(sections.slideshow_settings);
+  if (sections.jumuah_settings) next.jumuah = jumuahSettingsFromJson(sections.jumuah_settings);
+  if (sections.ticker_settings) next.ticker = tickerSettingsFromJson(sections.ticker_settings);
+
+  if (sections.display_settings) {
+    const ds = sections.display_settings;
+    next.meta = {
+      ...next.meta,
+      displayFontFamily: strOrNull(ds.display_font_family),
+      primaryTextColor: strOrNull(ds.primary_text_color),
+      secondaryTextColor: strOrNull(ds.secondary_text_color),
+      prayerNameColor: strOrNull(ds.prayer_name_color),
+      prayerTimeColor: strOrNull(ds.prayer_time_color),
+      dateTextColor: strOrNull(ds.date_text_color),
+      tickerTextColor: strOrNull(ds.ticker_text_color),
+      backgroundImages: Array.isArray(ds.background_images) ? (ds.background_images as string[]) : [],
+      activeBackgroundMediaId: strOrNull(ds.active_background_media_id),
+    };
+  }
+
+  return next;
+};
 
 /**
  * Deserialize from Supabase config_json, preserving [localMeta] device-local
@@ -564,9 +649,11 @@ export const appConfigToCloudJson = (c: AppConfig): Json => ({
 export const appConfigFromCloudJson = (j: Json, localMeta?: SyncMeta): AppConfig => {
   const ds: Json = j.display_settings ?? {};
   const base = localMeta ?? defaultSyncMeta();
+  // Device-local meta (orientation, PIN, admin theme, local background path)
+  // is carried over from `base` untouched -- the cloud does not describe this
+  // physical screen. See DEVICE_LOCAL_META_KEYS.
   const mergedMeta: SyncMeta = {
     ...base,
-    customBackgroundPath: strOrNull(ds.custom_background_path),
     displayFontFamily: strOrNull(ds.display_font_family),
     primaryTextColor: strOrNull(ds.primary_text_color),
     secondaryTextColor: strOrNull(ds.secondary_text_color),
@@ -574,13 +661,8 @@ export const appConfigFromCloudJson = (j: Json, localMeta?: SyncMeta): AppConfig
     prayerTimeColor: strOrNull(ds.prayer_time_color),
     dateTextColor: strOrNull(ds.date_text_color),
     tickerTextColor: strOrNull(ds.ticker_text_color),
-    displayOrientation: str(ds.display_orientation, base.displayOrientation),
-    adminLightTheme: bool(ds.admin_light_theme, base.adminLightTheme),
-    pinEnabled: bool(ds.pin_enabled, base.pinEnabled),
-    pinHash: strOrNull(ds.pin_hash) ?? base.pinHash,
     backgroundImages: Array.isArray(ds.background_images) ? (ds.background_images as string[]) : [],
     activeBackgroundMediaId: strOrNull(ds.active_background_media_id),
-    showOrientationFab: bool(ds.show_orientation_fab, base.showOrientationFab),
   };
 
   return {

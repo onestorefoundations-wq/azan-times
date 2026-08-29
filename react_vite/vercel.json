@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    { "source": "/about", "destination": "/about.html" },
+    { "source": "/m", "destination": "/masjid.html" },
+    { "source": "/m/:slug", "destination": "/masjid.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

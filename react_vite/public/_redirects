@@ -1,0 +1,7 @@
+# Three entries: the display at /, the congregation app at /m, the landing page
+# at /about. All are opened by typing or scanning a link rather than by
+# client-side navigation, so without these the host 404s before any JS loads.
+/about       /about.html    200
+/m           /masjid.html   200
+/m/*         /masjid.html   200
+/*           /index.html    200

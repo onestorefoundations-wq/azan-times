@@ -1,7 +1,12 @@
 /// media_library_service.dart
 /// CRUD for the Supabase `media_library` table.
-/// All files flow through the PHP upload server for the actual bytes.
-/// Supabase holds metadata + sync state only.
+///
+/// Uploads and deletes go through the `media-proxy` Edge Function. The PHP
+/// media server's shared API key used to be a const in this file -- i.e. inside
+/// the shipped APK -- and its delete endpoint keys off a bare filename, so
+/// anyone who extracted the key could delete any mosque's media. The key now
+/// lives as a function secret, and the proxy checks the media_library row's
+/// tenant against the caller's JWT before deleting anything.
 
 import 'dart:developer' as dev;
 import 'dart:typed_data';
@@ -9,13 +14,20 @@ import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
 import 'media_file.dart';
+import 'auth_session.dart';
+import 'supabase_sync_service.dart';
 
 class MediaLibraryService {
-  static const _phpUploadUrl =
-      'https://expertai.co.uk/softwares/general_upload/masjidazan/uploads.php';
-  static const _phpApiUrl =
-      'https://expertai.co.uk/softwares/general_upload/masjidazan/media_api.php';
-  static const _phpApiKey = r'EverY0NeKnoW$1T';
+  static String get _proxyUrl => '${SupabaseSyncService.functionsUrl}/media-proxy';
+
+  static Map<String, String> _authHeaders() {
+    final token = AuthSession.token;
+    if (token == null) throw Exception('Not linked to a cloud account');
+    return {
+      'Authorization': 'Bearer $token',
+      'apikey': SupabaseSyncService.anonKey,
+    };
+  }
 
   static SupabaseClient get _db => Supabase.instance.client;
 
@@ -29,31 +41,26 @@ class MediaLibraryService {
     String? deviceId,
     Map<String, dynamic>? metadata,
   }) async {
-    // 1. Upload bytes to PHP server
-    final uploaded = await _uploadToPhp(bytes, filename);
+    // tenantId is ignored server-side -- the proxy takes it from the JWT so a
+    // client cannot file uploads under someone else's tenant. It stays in the
+    // signature for call-site symmetry with the rest of the service.
+    final request = http.MultipartRequest('POST', Uri.parse(_proxyUrl));
+    request.headers.addAll(_authHeaders());
+    request.fields['filename'] = filename;
+    request.fields['category'] = category;
+    if (deviceId != null) request.fields['deviceId'] = deviceId;
+    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
 
-    // 2. Insert row in media_library
-    final row = {
-      'tenant_id': tenantId,
-      'filename': uploaded.filename,
-      'url': uploaded.url,
-      'file_size_bytes': uploaded.size,
-      'mime_type': uploaded.mime,
-      'category': category,
-      'is_active_background': false,
-      'is_deleted': false,
-      'uploaded_by_device': deviceId,
-      'metadata': metadata ?? {},
-    };
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-    final response = await _db
-        .from('media_library')
-        .insert(row)
-        .select()
-        .single();
+    if (response.statusCode != 200) {
+      throw Exception(data['error'] ?? 'Upload failed (${response.statusCode})');
+    }
 
-    dev.log('[MediaLib] Uploaded ${uploaded.filename} → ${response['id']}');
-    return MediaFile.fromJson(response);
+    dev.log('[MediaLib] Uploaded $filename → ${data['id']}');
+    return MediaFile.fromJson(data);
   }
 
   // ── Fetch all active files for a tenant ──────────────────────
@@ -121,31 +128,20 @@ class MediaLibraryService {
   // ── Delete a file (server + Supabase) ───────────────────────
 
   static Future<void> deleteFile(String tenantId, String fileId) async {
-    // Fetch URL before deleting so we can remove from server too
-    final rows = await _db
-        .from('media_library')
-        .select('url')
-        .eq('id', fileId)
-        .eq('tenant_id', tenantId)
-        .limit(1);
+    // Row removal and the media-server delete both happen inside the proxy,
+    // which verifies the row belongs to the caller's tenant first.
+    final response = await http.post(
+      Uri.parse(_proxyUrl),
+      headers: {..._authHeaders(), 'Content-Type': 'application/json'},
+      body: jsonEncode({'action': 'delete', 'fileId': fileId}),
+    );
 
-    final url = (rows as List).isNotEmpty
-        ? (rows.first as Map<String, dynamic>)['url'] as String?
-        : null;
-
-    // Remove from Supabase (hard delete — cleaner than soft-delete for media)
-    await _db
-        .from('media_library')
-        .delete()
-        .eq('id', fileId)
-        .eq('tenant_id', tenantId);
-
-    // Remove from PHP server (fire and forget — don't block on failure)
-    if (url != null) {
-      deleteFileFromServer(url); // intentionally not awaited
+    if (response.statusCode != 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(data['error'] ?? 'Delete failed (${response.statusCode})');
     }
 
-    dev.log('[MediaLib] Deleted $fileId from DB and queued server delete');
+    dev.log('[MediaLib] Deleted $fileId');
   }
 
   // ── Reorder files within a category ─────────────────────────
@@ -223,101 +219,5 @@ class MediaLibraryService {
           },
         )
         .subscribe();
-  }
-
-  // ── PHP server helpers ───────────────────────────────────────
-
-  /// Check if a file actually exists on the PHP server.
-  static Future<bool> checkFileExistsOnServer(String url) async {
-    try {
-      final filename = url.split('/').last;
-      final response = await http.post(
-        Uri.parse(_phpApiUrl),
-        headers: {
-          'Authorization': 'Bearer $_phpApiKey',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'action': 'exists', 'filename': filename}),
-      );
-      if (response.statusCode != 200) return false;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      return data['exists'] as bool? ?? false;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// Delete a file from the PHP server by URL.
-  static Future<void> deleteFileFromServer(String url) async {
-    try {
-      final filename = url.split('/').last;
-      final response = await http.post(
-        Uri.parse(_phpApiUrl),
-        headers: {
-          'Authorization': 'Bearer $_phpApiKey',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'action': 'delete', 'filename': filename}),
-      );
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      dev.log('[MediaLib] Server delete $filename → ${data['deleted']}');
-    } catch (e) {
-      dev.log('[MediaLib] Server delete failed: $e');
-    }
-  }
-
-  /// List all files on the PHP server (for audit/reconciliation).
-  static Future<List<Map<String, dynamic>>> listServerFiles() async {
-    final response = await http.post(
-      Uri.parse(_phpApiUrl),
-      headers: {
-        'Authorization': 'Bearer $_phpApiKey',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({'action': 'list'}),
-    );
-    if (response.statusCode != 200) throw Exception('List failed: ${response.statusCode}');
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return (data['files'] as List).cast<Map<String, dynamic>>();
-  }
-
-  // ── PHP upload helper ────────────────────────────────────────
-
-  static Future<({String url, String filename, int size, String mime})> _uploadToPhp(
-      Uint8List bytes, String filename) async {
-    // Use new media_api.php endpoint (upload action)
-    final request = http.MultipartRequest('POST', Uri.parse(_phpApiUrl));
-    request.headers['Authorization'] = 'Bearer $_phpApiKey';
-    request.fields['action'] = 'upload';
-    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
-
-    final streamed = await request.send();
-    final response = await http.Response.fromStream(streamed);
-
-    if (response.statusCode != 200) {
-      throw Exception('PHP server returned ${response.statusCode}');
-    }
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    if (data['success'] != true) {
-      throw Exception(data['error'] ?? 'Upload failed');
-    }
-
-    final url = data['url'] as String;
-    final fname = data['filename'] as String? ?? url.split('/').last;
-    final size = (data['size'] as num?)?.toInt() ?? bytes.length;
-    final mime = data['mime_type'] as String? ?? _mimeFromFilename(filename);
-    return (url: url, filename: fname, size: size, mime: mime);
-  }
-
-  static String _mimeFromFilename(String filename) {
-    final ext = filename.split('.').last.toLowerCase();
-    return switch (ext) {
-      'png' => 'image/png',
-      'gif' => 'image/gif',
-      'webp' => 'image/webp',
-      'bmp' => 'image/bmp',
-      _ => 'image/jpeg',
-    };
   }
 }

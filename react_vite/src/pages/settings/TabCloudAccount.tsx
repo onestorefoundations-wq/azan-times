@@ -9,6 +9,7 @@ import { SupabaseSync } from '../../core/supabaseSync';
 import { isLinked } from '../../core/appConfig';
 import { useAppStore } from '../../store/appStore';
 import SyncStatusChip from '../../components/SyncStatusChip';
+import PublicPagePanel from '../../components/PublicPagePanel';
 import {
   PrimaryButton,
   SettingsFormField,
@@ -150,6 +151,20 @@ export default function TabCloudAccount({ onConfigRefreshed }: { onConfigRefresh
               config.meta.lastSuccessfulSync ? new Date(config.meta.lastSuccessfulSync).toLocaleString() : 'Never',
             )}
           </div>
+
+          {config.profile.tenantId && (
+            <PublicPagePanel
+              tenantId={config.profile.tenantId}
+              theme={{
+                text: t.textPrimary,
+                muted: t.textSecondary,
+                border: t.borderSubtle,
+                accent: t.accentTeal,
+                surface: t.bgElevated,
+              }}
+            />
+          )}
+
           <button
             onClick={loading ? undefined : disconnect}
             style={{ marginTop: 16, padding: '12px 20px', borderRadius: 8, border: `1px solid ${t.accentRed}`, color: t.accentRed }}
@@ -215,7 +230,7 @@ export default function TabCloudAccount({ onConfigRefreshed }: { onConfigRefresh
                 }
               />
               <SettingsFormField label="Password" helpText="Minimum 6 characters recommended.">
-                <TextInput type="password" value={regPw} placeholder="Minimum 6 characters recommended" onChange={(e) => setRegPw(e.target.value)} />
+                <TextInput type="password" value={regPw} placeholder="Minimum 6 characters" onChange={(e) => setRegPw(e.target.value)} />
               </SettingsFormField>
               <PrimaryButton onClick={loading ? undefined : register} style={{ width: '100%' }}>
                 {loading ? 'Creating Account…' : 'Create Account & Link Display'}

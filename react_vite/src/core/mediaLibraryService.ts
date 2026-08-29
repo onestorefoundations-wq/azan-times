@@ -1,29 +1,32 @@
 /**
  * mediaLibraryService.ts
- * CRUD for the Supabase `media_library` table + the PHP media server.
- * Port of media_library_service.dart — same endpoints, key, and table shape.
+ * CRUD for the Supabase `media_library` table.
+ *
+ * Uploads and deletes go through the `media-proxy` Edge Function. The PHP media
+ * server's shared API key used to sit in this file — i.e. in the shipped
+ * bundle — and its delete endpoint keys off a bare filename, so anyone could
+ * extract the key and delete any mosque's media. The key now lives as a
+ * function secret, and the proxy checks the media_library row's tenant against
+ * the caller's JWT before deleting anything.
  */
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
+import { FUNCTIONS_URL, SUPABASE_ANON_KEY } from './supabaseConfig';
+import { AuthSession } from './authSession';
 import { MediaFile, mediaFileFromJson } from './mediaFile';
 
-const PHP_API_URL = 'https://expertai.co.uk/softwares/general_upload/masjidazan/media_api.php';
-const PHP_API_KEY = 'EverY0NeKnoW$1T';
+const MEDIA_PROXY_URL = `${FUNCTIONS_URL}/media-proxy`;
 
-async function uploadToPhp(blob: Blob, filename: string): Promise<{ url: string; filename: string; size: number; mime: string }> {
-  const form = new FormData();
-  form.append('action', 'upload');
-  form.append('file', blob, filename);
-  const res = await fetch(PHP_API_URL, { method: 'POST', headers: { Authorization: `Bearer ${PHP_API_KEY}` }, body: form });
-  if (!res.ok) throw new Error(`PHP server returned ${res.status}`);
-  const data = await res.json();
-  if (data.success !== true) throw new Error(data.error ?? 'Upload failed');
-  return {
-    url: data.url as string,
-    filename: (data.filename as string) ?? (data.url as string).split('/').pop()!,
-    size: (data.size as number) ?? blob.size,
-    mime: (data.mime_type as string) ?? blob.type ?? 'image/jpeg',
-  };
+function authHeaders(): Record<string, string> {
+  const token = AuthSession.getToken();
+  if (!token) throw new Error('Not linked to a cloud account');
+  return { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` };
+}
+
+async function proxyJson(res: Response): Promise<any> {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Media proxy returned ${res.status}`);
+  return data;
 }
 
 export const MediaLibraryService = {
@@ -34,25 +37,21 @@ export const MediaLibraryService = {
     category: string;
     deviceId?: string | null;
   }): Promise<MediaFile> {
-    const uploaded = await uploadToPhp(params.blob, params.filename);
-    const { data, error } = await supabase
-      .from('media_library')
-      .insert({
-        tenant_id: params.tenantId,
-        filename: uploaded.filename,
-        url: uploaded.url,
-        file_size_bytes: uploaded.size,
-        mime_type: uploaded.mime,
-        category: params.category,
-        is_active_background: false,
-        is_deleted: false,
-        uploaded_by_device: params.deviceId ?? null,
-        metadata: {},
-      })
-      .select()
-      .single();
-    if (error || !data) throw new Error(error?.message ?? 'Insert failed');
-    return mediaFileFromJson(data);
+    // tenantId is ignored server-side — the proxy takes it from the JWT so a
+    // client cannot file uploads under someone else's tenant. It stays in the
+    // signature for call-site symmetry with the rest of the service.
+    const form = new FormData();
+    form.append('file', params.blob, params.filename);
+    form.append('filename', params.filename);
+    form.append('category', params.category);
+    if (params.deviceId) form.append('deviceId', params.deviceId);
+
+    const res = await fetch(MEDIA_PROXY_URL, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: form,
+    });
+    return mediaFileFromJson(await proxyJson(res));
   },
 
   async fetchFiles(tenantId: string): Promise<MediaFile[]> {
@@ -81,11 +80,15 @@ export const MediaLibraryService = {
       .eq('is_active_background', true);
   },
 
-  async deleteFile(tenantId: string, fileId: string): Promise<void> {
-    const { data: rows } = await supabase.from('media_library').select('url').eq('id', fileId).eq('tenant_id', tenantId).limit(1);
-    const url = rows && rows.length ? (rows[0].url as string) : null;
-    await supabase.from('media_library').delete().eq('id', fileId).eq('tenant_id', tenantId);
-    if (url) void deleteFileFromServer(url);
+  async deleteFile(_tenantId: string, fileId: string): Promise<void> {
+    // Row removal and the media-server delete both happen inside the proxy,
+    // which verifies the row belongs to the caller's tenant first.
+    const res = await fetch(MEDIA_PROXY_URL, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', fileId }),
+    });
+    await proxyJson(res);
   },
 
   subscribeToLibrary(tenantId: string, onUpdate: (files: MediaFile[]) => void): RealtimeChannel {
@@ -101,16 +104,3 @@ export const MediaLibraryService = {
       .subscribe();
   },
 };
-
-async function deleteFileFromServer(url: string): Promise<void> {
-  try {
-    const filename = url.split('/').pop();
-    await fetch(PHP_API_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${PHP_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'delete', filename }),
-    });
-  } catch (e) {
-    console.warn('[MediaLib] server delete failed', e);
-  }
-}

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android TV launcher banner (nominally 320x180 xhdpi).
+
+    Drawn rather than shipped as a PNG so there is no binary asset to keep in
+    sync with the icon: the launcher scales this to whatever it needs, and the
+    brand colour matches ic_launcher_background so the banner and the icon read
+    as the same app.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/ic_launcher_background" />
+        </shape>
+    </item>
+    <item
+        android:drawable="@mipmap/ic_launcher"
+        android:gravity="center"
+        android:width="96dp"
+        android:height="96dp" />
+</layer-list>

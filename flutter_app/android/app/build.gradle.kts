@@ -18,7 +18,12 @@ android {
         applicationId = "com.pro26.masjid_app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // Pinned rather than inherited from flutter.minSdkVersion: the supported
+        // floor for the TV fleet is Android 7.0, and a Flutter upgrade must not
+        // silently raise it and cut sets off the bottom of the range. 24 is also
+        // the lowest modern Flutter supports, so this cannot go lower without
+        // changing toolchain.
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

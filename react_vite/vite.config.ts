@@ -27,6 +27,9 @@ export default defineConfig({
         // phone does not download the display's adhan audio, fonts, Leaflet and
         // settings panel just to read a table of times.
         masjid: path.resolve(__dirname, 'masjid.html'),
+        // The public landing / about page. Not at '/' because that is the TV
+        // display and deployed kiosks point at it.
+        about: path.resolve(__dirname, 'about.html'),
       },
     },
   },
@@ -66,7 +69,7 @@ export default defineConfig({
         // Never precache version.json — it must always be fetched from the network.
         // masjid.html is the congregation entry; its own worker caches it at
         // runtime, and the display must never precache or serve it.
-        globIgnores: ['**/version.json', '**/masjid.html'],
+        globIgnores: ['**/version.json', '**/masjid.html', '**/about.html'],
         runtimeCaching: [
           {
             // version.json must NEVER be served from cache — always network.
@@ -98,31 +101,34 @@ export default defineConfig({
     // would render the display in development while serving the congregation
     // page in production. Mirrors the _redirects / vercel.json rewrites.
     {
-      name: 'dev-serve-masjid-entry',
+      name: 'dev-serve-extra-entries',
       configureServer(server: { middlewares: { use: (fn: any) => void } }) {
         server.middlewares.use((req: any, _res: any, next: any) => {
           if (req.url && /^\/m(\/|$|\?)/.test(req.url)) req.url = '/masjid.html';
+          else if (req.url && /^\/about(\/|$|\?)/.test(req.url)) req.url = '/about.html';
           next();
         });
       },
     },
-    // VitePWA injects the display's manifest link into every HTML entry. The
-    // congregation page declares its own first, and two manifest links is a
-    // spec-order coin flip, so drop the injected one from that entry.
+    // VitePWA injects the display's manifest link into every HTML entry, which
+    // would offer the fullscreen TV kiosk for install on the congregation app
+    // and on the landing page. The congregation page declares its own manifest
+    // instead; the landing page is a web page, not something to install.
     {
-      name: 'strip-display-manifest-from-masjid',
+      name: 'strip-display-manifest-from-extra-entries',
       // closeBundle, not transformIndexHtml: VitePWA injects its link after any
       // post-enforced transform hook, so the only place it is reliably gone is
       // the file on disk.
       closeBundle() {
-        const file = 'dist/masjid.html';
-        if (!existsSync(file)) return;
-        const html = readFileSync(file, 'utf8');
-        const stripped = html.replace(
-          /[ \t]*<link[^>]*rel="manifest"(?![^>]*masjid\.webmanifest)[^>]*>\r?\n?/g,
-          '',
-        );
-        if (stripped !== html) writeFileSync(file, stripped);
+        for (const file of ['dist/masjid.html', 'dist/about.html']) {
+          if (!existsSync(file)) continue;
+          const html = readFileSync(file, 'utf8');
+          const stripped = html.replace(
+            /[ \t]*<link[^>]*rel="manifest"(?![^>]*masjid\.webmanifest)[^>]*>\r?\n?/g,
+            '',
+          );
+          if (stripped !== html) writeFileSync(file, stripped);
+        }
       },
     },
   ],

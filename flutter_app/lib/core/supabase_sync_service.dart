@@ -414,20 +414,6 @@ class SupabaseSyncService {
     dev.log('[Sync] Applied section(s): ${applied.join(", ")}');
   }
 
-  static Future<void> _applyConfig(Map<String, dynamic> configJson, int newVersion) async {
-    final currentConfig = await StorageService.loadConfig();
-
-    // Build new config from cloud, preserving device-local meta
-    final updatedMeta = currentConfig.meta.copyWith(
-      supabaseConfigVersion: newVersion,
-      lastSuccessfulSync: DateTime.now().millisecondsSinceEpoch,
-    );
-
-    final newConfig = AppConfig.fromCloudJson(configJson, localMeta: updatedMeta);
-    await StorageService.saveConfig(newConfig);
-    dev.log('[Sync] Applied cloud config version: $newVersion');
-  }
-
   // ─────────────────────────────────────────────────────────────
   // Account: Link existing
   // ─────────────────────────────────────────────────────────────

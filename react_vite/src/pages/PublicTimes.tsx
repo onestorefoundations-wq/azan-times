@@ -1,7 +1,7 @@
 /**
  * PublicTimes.tsx
- * The read-only prayer-times page behind the QR code on the display, installable
- * as a PWA so the congregation keeps the times on their phone.
+ * The congregation's app: prayer times for the mosques this phone has scanned,
+ * installable from the QR code on any mosque's display.
  *
  * Deliberately isolated from the rest of the app:
  *  - it is its own Vite entry (masjid.html) and imports neither the store, the
@@ -9,64 +9,34 @@
  *    here into anything that can edit and no TV asset in its bundle;
  *  - it talks only to the `public-times` Edge Function, which returns a
  *    whitelist of display fields;
- *  - it caches the payload and recomputes times locally with the same `adhan`
- *    engine the display uses, so it keeps working with no signal — which is the
- *    point of installing it.
+ *  - it caches each mosque's settings and recomputes times locally with the same
+ *    `adhan` engine the display uses, so it keeps working with no signal — which
+ *    is the point of installing it.
+ *
+ * One install holds many mosques rather than one app per mosque: most people
+ * follow a single masjid, but travelling or a second jama'ah should be a tap,
+ * not a hunt for an old link. The bottom navigation is where Qibla and anything
+ * else lands later.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppConfig, appConfigFromCloudJson } from '../core/appConfig';
 import { PrayerConfig, calculatePrayers, getNextPrayer } from '../core/prayerEngine';
 import { FUNCTIONS_URL } from '../core/supabaseConfig';
+import {
+  PublicPayload,
+  SavedMosque,
+  forget,
+  lastViewedSlug,
+  listSaved,
+  parseSlugInput,
+  readCache,
+  remember,
+} from '../core/savedMosques';
 
-const CACHE_KEY = 'public_times_cache';
-const LAST_SLUG_KEY = 'public_times_last_slug';
 /** Re-fetch at most this often; the page renders from cache in the meantime. */
 const REFRESH_MS = 6 * 60 * 60 * 1000;
 
-interface PublicPayload {
-  mosque_name: string;
-  slug: string;
-  config_version: number;
-  masjid_profile: Record<string, unknown> | null;
-  time_adjustments: Record<string, unknown> | null;
-  features_format: Record<string, unknown> | null;
-  jumuah_settings: Record<string, unknown> | null;
-}
-
-interface CacheEntry {
-  payload: PublicPayload;
-  fetchedAt: number;
-}
-
-const readCache = (slug: string): CacheEntry | null => {
-  try {
-    const raw = localStorage.getItem(`${CACHE_KEY}:${slug}`);
-    return raw ? (JSON.parse(raw) as CacheEntry) : null;
-  } catch {
-    return null;
-  }
-};
-
-const writeCache = (slug: string, payload: PublicPayload) => {
-  try {
-    localStorage.setItem(
-      `${CACHE_KEY}:${slug}`,
-      JSON.stringify({ payload, fetchedAt: Date.now() } satisfies CacheEntry),
-    );
-    localStorage.setItem(LAST_SLUG_KEY, slug);
-  } catch {
-    /* private mode, quota — the page still renders from memory */
-  }
-};
-
-/** The installed PWA opens /m with no slug; send it to the last one viewed. */
-export const lastViewedSlug = (): string | null => {
-  try {
-    return localStorage.getItem(LAST_SLUG_KEY);
-  } catch {
-    return null;
-  }
-};
+type Tab = 'times' | 'mosques';
 
 const fmtTime = (d: Date, use24: boolean) =>
   d.toLocaleTimeString(undefined, {
@@ -85,9 +55,11 @@ const countdown = (target: Date, now: Date): string => {
 };
 
 export default function PublicTimes({ slug: slugProp }: { slug?: string | null }) {
-  // Installed from the home screen the app opens /m with no slug, so fall back
-  // to the last mosque this phone looked at.
-  const slug = (slugProp ?? lastViewedSlug() ?? '').toLowerCase();
+  // Opened from the home screen there is no slug in the path, so fall back to
+  // the mosque this phone last looked at.
+  const [slug, setSlug] = useState(() => (slugProp ?? lastViewedSlug() ?? '').toLowerCase());
+  const [tab, setTab] = useState<Tab>('times');
+  const [saved, setSaved] = useState<SavedMosque[]>(() => listSaved());
 
   const [payload, setPayload] = useState<PublicPayload | null>(() =>
     slug ? (readCache(slug)?.payload ?? null) : null,
@@ -101,43 +73,62 @@ export default function PublicTimes({ slug: slugProp }: { slug?: string | null }
     return () => clearInterval(t);
   }, []);
 
-  const load = useCallback(
-    async (force = false) => {
-      if (!slug) return;
-      const cached = readCache(slug);
-      if (!force && cached && Date.now() - cached.fetchedAt < REFRESH_MS) return;
+  const load = useCallback(async (target: string, force = false) => {
+    if (!target) return;
+    const cached = readCache(target);
+    if (cached) setPayload(cached.payload);
+    if (!force && cached && Date.now() - cached.fetchedAt < REFRESH_MS) return;
 
-      try {
-        const res = await fetch(`${FUNCTIONS_URL}/public-times?slug=${encodeURIComponent(slug)}`);
-        if (res.status === 404) {
-          // Only surface this when there is nothing cached to show; an enabled
-          // page that is briefly unreachable should not blank out.
-          if (!cached) setError('This mosque page is not available.');
-          return;
-        }
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
-        const data = (await res.json()) as PublicPayload;
-        writeCache(slug, data);
-        setPayload(data);
-        setError(null);
-      } catch (e) {
-        console.warn('[PublicTimes] fetch failed', e);
-        if (!cached) setError('Could not load prayer times. Check your connection.');
+    try {
+      const res = await fetch(`${FUNCTIONS_URL}/public-times?slug=${encodeURIComponent(target)}`);
+      if (res.status === 404) {
+        // Only surface this when there is nothing cached to show; a published
+        // page that is briefly unreachable should not blank out.
+        if (!cached) setError('No mosque found for that link.');
+        return;
       }
-    },
-    [slug],
-  );
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+
+      const data = (await res.json()) as PublicPayload;
+      remember(target, data);
+      setSaved(listSaved());
+      setPayload(data);
+      setError(null);
+    } catch (e) {
+      console.warn('[PublicTimes] fetch failed', e);
+      if (!cached) setError('Could not load prayer times. Check your connection.');
+    }
+  }, []);
 
   useEffect(() => {
-    void load();
-    // Times are recomputed locally, so a refresh is only about settings changes.
+    void load(slug);
+  }, [slug, load]);
+
+  useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void load();
+      if (document.visibilityState === 'visible') void load(slug);
     };
+    const onOnline = () => void load(slug, true);
     document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('online', () => void load(true));
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [load]);
+    window.addEventListener('online', onOnline);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [slug, load]);
+
+  /** Switch mosque without a router: update state and keep the URL shareable. */
+  const openMosque = useCallback((next: string) => {
+    setSlug(next);
+    setPayload(readCache(next)?.payload ?? null);
+    setError(null);
+    setTab('times');
+    try {
+      window.history.pushState({}, '', `/m/${next}`);
+    } catch {
+      /* history is unavailable in some embedded webviews; state still switched */
+    }
+  }, []);
 
   const config: AppConfig | null = useMemo(() => {
     if (!payload) return null;
@@ -161,34 +152,72 @@ export default function PublicTimes({ slug: slugProp }: { slug?: string | null }
     [prayers, now],
   );
 
-  if (!slug) {
-    return (
-      <Shell>
-        <p style={s.muted}>Scan the QR code on your mosque's display to open its times here.</p>
-      </Shell>
-    );
-  }
+  // Nothing scanned yet: the mosque list is the only useful screen.
+  const showMosques = tab === 'mosques' || (!slug && saved.length === 0);
 
-  if (error && !payload) {
-    return (
-      <Shell>
-        <p style={s.muted}>{error}</p>
-      </Shell>
-    );
-  }
+  return (
+    <div style={s.page}>
+      <div style={s.card}>
+        {showMosques ? (
+          <MosquesView
+            saved={saved}
+            activeSlug={slug}
+            onOpen={openMosque}
+            onForget={(target) => {
+              forget(target);
+              setSaved(listSaved());
+            }}
+          />
+        ) : (
+          <TimesView
+            payload={payload}
+            config={config}
+            prayers={prayers}
+            next={next}
+            now={now}
+            error={error}
+          />
+        )}
+      </div>
 
-  if (!payload || !config) {
-    return (
-      <Shell>
-        <p style={s.muted}>Loading…</p>
-      </Shell>
-    );
-  }
+      <nav style={s.nav}>
+        <NavButton label="Times" icon="🕌" active={tab === 'times'} onClick={() => setTab('times')} />
+        <NavButton
+          label="Mosques"
+          icon="📍"
+          active={tab === 'mosques'}
+          onClick={() => setTab('mosques')}
+          badge={saved.length || undefined}
+        />
+      </nav>
+    </div>
+  );
+}
+
+// ── Times ──────────────────────────────────────────────────────
+
+function TimesView({
+  payload,
+  config,
+  prayers,
+  next,
+  now,
+  error,
+}: {
+  payload: PublicPayload | null;
+  config: AppConfig | null;
+  prayers: PrayerConfig[];
+  next: PrayerConfig | null;
+  now: Date;
+  error: string | null;
+}) {
+  if (error && !payload) return <p style={s.muted}>{error}</p>;
+  if (!payload || !config) return <p style={s.muted}>Loading…</p>;
 
   const use24 = config.features.use24HourFormat;
 
   return (
-    <Shell>
+    <>
       <h1 style={s.title}>{payload.mosque_name}</h1>
       <p style={s.date}>
         {now.toLocaleDateString(undefined, {
@@ -240,15 +269,121 @@ export default function PublicTimes({ slug: slugProp }: { slug?: string | null }
         Times are calculated on your device, so this page works offline.
         {error ? ' Showing the last saved settings.' : ''}
       </p>
-    </Shell>
+    </>
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+// ── Mosques ────────────────────────────────────────────────────
+
+function MosquesView({
+  saved,
+  activeSlug,
+  onOpen,
+  onForget,
+}: {
+  saved: SavedMosque[];
+  activeSlug: string;
+  onOpen: (slug: string) => void;
+  onForget: (slug: string) => void;
+}) {
+  const [input, setInput] = useState('');
+  const [inputError, setInputError] = useState<string | null>(null);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseSlugInput(input);
+    if (!parsed) {
+      setInputError('That does not look like a mosque link or code.');
+      return;
+    }
+    setInput('');
+    setInputError(null);
+    onOpen(parsed);
+  };
+
   return (
-    <div style={s.page}>
-      <div style={s.card}>{children}</div>
-    </div>
+    <>
+      <h1 style={s.title}>Mosques</h1>
+      <p style={s.date}>Scan a mosque's QR code to add it here.</p>
+
+      {saved.length === 0 && (
+        <p style={s.muted}>
+          No mosques yet. Scan the QR code shown on your mosque's display, or paste its link below.
+        </p>
+      )}
+
+      {saved.map((m) => (
+        <div
+          key={m.slug}
+          style={{
+            ...s.mosqueRow,
+            ...(m.slug === activeSlug ? { borderColor: 'rgba(0,212,170,0.45)' } : null),
+          }}
+        >
+          <button type="button" onClick={() => onOpen(m.slug)} style={s.mosqueButton}>
+            <span style={{ fontWeight: 600, fontSize: 15 }}>{m.name}</span>
+            <span style={{ fontSize: 12, color: 'rgba(232,240,254,0.45)' }}>/m/{m.slug}</span>
+          </button>
+          <button
+            type="button"
+            aria-label={`Remove ${m.name}`}
+            onClick={() => onForget(m.slug)}
+            style={s.removeButton}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+
+      <form onSubmit={submit} style={{ marginTop: 20 }}>
+        <label style={{ fontSize: 12, color: 'rgba(232,240,254,0.5)' }}>Add by link or code</label>
+        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          <input
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setInputError(null);
+            }}
+            placeholder="central-mosque"
+            style={s.input}
+          />
+          <button type="submit" style={s.addButton}>
+            Add
+          </button>
+        </div>
+        {inputError && <p style={{ color: '#ff6b6b', fontSize: 12, marginTop: 8 }}>{inputError}</p>}
+      </form>
+    </>
+  );
+}
+
+// ── Bottom navigation ──────────────────────────────────────────
+
+function NavButton({
+  label,
+  icon,
+  active,
+  onClick,
+  badge,
+}: {
+  label: string;
+  icon: string;
+  active: boolean;
+  onClick: () => void;
+  badge?: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{ ...s.navButton, color: active ? '#00d4aa' : 'rgba(232,240,254,0.55)' }}
+    >
+      <span style={{ fontSize: 18, lineHeight: 1 }}>{icon}</span>
+      <span style={{ fontSize: 11 }}>
+        {label}
+        {badge ? ` (${badge})` : ''}
+      </span>
+    </button>
   );
 }
 
@@ -256,7 +391,8 @@ const s: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100vh',
     margin: 0,
-    padding: '24px 16px',
+    // Room for the fixed bottom bar, plus the home indicator on phones.
+    padding: '24px 16px calc(76px + env(safe-area-inset-bottom))',
     background: 'linear-gradient(160deg, #0d1b2a 0%, #1b263b 100%)',
     color: '#e8f0fe',
     fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -321,5 +457,83 @@ const s: Record<string, React.CSSProperties> = {
     color: 'rgba(232,240,254,0.35)',
     lineHeight: 1.6,
   },
-  muted: { textAlign: 'center', color: 'rgba(232,240,254,0.6)', padding: '40px 0' },
+  muted: { textAlign: 'center', color: 'rgba(232,240,254,0.6)', padding: '30px 0', lineHeight: 1.6 },
+  mosqueRow: {
+    display: 'flex',
+    alignItems: 'stretch',
+    gap: 8,
+    marginBottom: 10,
+    borderRadius: 12,
+    border: '1px solid rgba(255,255,255,0.10)',
+    background: 'rgba(255,255,255,0.04)',
+    overflow: 'hidden',
+  },
+  mosqueButton: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 3,
+    padding: '14px 14px',
+    background: 'transparent',
+    border: 'none',
+    color: '#e8f0fe',
+    textAlign: 'left',
+    cursor: 'pointer',
+    font: 'inherit',
+  },
+  removeButton: {
+    width: 46,
+    background: 'transparent',
+    border: 'none',
+    borderLeft: '1px solid rgba(255,255,255,0.08)',
+    color: 'rgba(232,240,254,0.4)',
+    fontSize: 15,
+    cursor: 'pointer',
+  },
+  input: {
+    flex: 1,
+    padding: '11px 12px',
+    borderRadius: 9,
+    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(255,255,255,0.05)',
+    color: '#e8f0fe',
+    fontSize: 14,
+    font: 'inherit',
+    outline: 'none',
+  },
+  addButton: {
+    padding: '11px 18px',
+    borderRadius: 9,
+    border: '1px solid rgba(0,212,170,0.4)',
+    background: 'rgba(0,212,170,0.12)',
+    color: '#00d4aa',
+    fontSize: 14,
+    cursor: 'pointer',
+    font: 'inherit',
+  },
+  nav: {
+    position: 'fixed',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    display: 'flex',
+    justifyContent: 'space-around',
+    padding: '8px 0 calc(8px + env(safe-area-inset-bottom))',
+    background: 'rgba(13,27,42,0.94)',
+    backdropFilter: 'blur(12px)',
+    borderTop: '1px solid rgba(255,255,255,0.08)',
+  },
+  navButton: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 4,
+    padding: '6px 0',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    font: 'inherit',
+  },
 };

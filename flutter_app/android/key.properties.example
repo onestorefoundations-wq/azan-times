@@ -1,0 +1,21 @@
+# Copy to key.properties and fill in. NEVER commit the real file or the keystore
+# itself -- both are git-ignored, and losing either means you can no longer ship
+# an update that existing installs will accept.
+#
+# Generate the keystore once, and keep it forever:
+#
+#   keytool -genkey -v \
+#     -keystore C:\path\to\masjid-release.jks \
+#     -storetype JKS \
+#     -keyalg RSA -keysize 2048 -validity 10000 \
+#     -alias masjid
+#
+# Android identifies an app by its signing key. Sign a later release with a
+# different key and every device that already has the app refuses the update --
+# users have to uninstall and lose their settings. Back the .jks file up
+# somewhere you will still have it in five years.
+
+storeFile=C:\path\to\masjid-release.jks
+storePassword=
+keyAlias=masjid
+keyPassword=

@@ -48,7 +48,12 @@ android {
     signingConfigs {
         if (hasReleaseKeystore) {
             create("release") {
-                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                // rootProject.file, not file: inside the android block a bare
+                // file() resolves against the app module, so a relative
+                // storeFile would be looked up in android/app/ rather than
+                // next to the key.properties that names it. Absolute paths are
+                // returned unchanged either way.
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")

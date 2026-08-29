@@ -65,6 +65,14 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // The display's worker has scope '/', and its navigation fallback
+        // serves the cached index.html for ANY navigation in the origin. Once a
+        // device had loaded the display even once, /about and /m/<slug> then
+        // rendered the TV display instead of their own entries -- invisible to
+        // curl, which bypasses service workers, and only reproducible in a real
+        // browser. These two paths are separate entries and must reach the
+        // network (and their own rewrites) rather than the display's shell.
+        navigateFallbackDenylist: [/^\/about(\/|$)/, /^\/m(\/|$)/],
         globPatterns: ['**/*.{js,css,html,mp3,woff2,ttf,png,svg}'],
         // Never precache version.json — it must always be fetched from the network.
         // masjid.html is the congregation entry; its own worker caches it at

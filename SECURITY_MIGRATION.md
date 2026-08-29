@@ -79,8 +79,9 @@ empty string bcrypted at step 3 — they cannot be logged into and need a passwo
 set by hand:
 
 ```sql
+set search_path = public, extensions;
 update admin_users
-   set password_hash = extensions.crypt('<new password>', extensions.gen_salt('bf', 12))
+   set password_hash = crypt('<new password>', gen_salt('bf', 12))
  where username = '<username>';
 ```
 

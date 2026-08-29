@@ -18,7 +18,17 @@
 -- they authenticate by reading password_hash straight off the table.
 -- ============================================================================
 
+-- 01_create_db.sql already ran a bare CREATE EXTENSION pgcrypto, which put it
+-- in whatever schema search_path resolved to at the time. Because the extension
+-- then already exists, IF NOT EXISTS below is a no-op and its WITH SCHEMA is
+-- ignored -- so schema-qualifying the calls would fail on a project where
+-- pgcrypto landed in public instead.
+--
+-- Set the search_path for this script and call crypt()/gen_salt() unqualified,
+-- which resolves under either layout. Every function created below carries the
+-- same search_path of its own, so they do not depend on this session setting.
 CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA extensions;
+SET search_path = public, extensions;
 
 -- ---------------------------------------------------------------------------
 -- 0. Tables that were missing from 01_create_db.sql
@@ -59,7 +69,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS device_registry_tenant_device_key
 -- ---------------------------------------------------------------------------
 
 UPDATE admin_users
-   SET password_hash = extensions.crypt(password_hash, extensions.gen_salt('bf', 12))
+   SET password_hash = crypt(password_hash, gen_salt('bf', 12))
  WHERE password_hash IS NOT NULL
    AND password_hash NOT LIKE '$2%';
 
@@ -79,7 +89,7 @@ AS $fn$
     FROM admin_users u
     JOIN tenants t ON t.id = u.tenant_id
    WHERE (u.username = p_identifier OR u.mobile = p_identifier OR u.email = p_identifier)
-     AND u.password_hash = extensions.crypt(p_password, u.password_hash)
+     AND u.password_hash = crypt(p_password, u.password_hash)
    LIMIT 1;
 $fn$;
 
@@ -110,7 +120,7 @@ BEGIN
 
   INSERT INTO admin_users (tenant_id, username, mobile, email, password_hash)
   VALUES (v_tenant_id, p_username, p_mobile, p_email,
-          extensions.crypt(p_password, extensions.gen_salt('bf', 12)))
+          crypt(p_password, gen_salt('bf', 12)))
   RETURNING id INTO v_user_id;
 
   RETURN QUERY SELECT v_user_id, v_tenant_id, p_username, p_mobile, p_email, p_mosque_name;

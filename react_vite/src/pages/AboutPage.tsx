@@ -10,17 +10,71 @@
  * Its own Vite entry (about.html) so a visitor reading a marketing page does not
  * download the display bundle or the congregation app.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 /**
  * Releases rather than a file in the deploy: the APK is tens of megabytes and
  * would land in git history on every build, and Vercel would serve it from the
  * same budget as the app.
  */
-const RELEASES_URL = 'https://github.com/onestorefoundations-wq/azan-times/releases/latest';
+const REPO = 'onestorefoundations-wq/azan-times';
+const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
+const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+
+interface ReleaseInfo {
+  version: string | null;
+  /** Direct APK link when known, otherwise the release page. */
+  url: string;
+  sizeMb: number | null;
+}
+
+/**
+ * Shown until the API answers, and kept if it never does. Unauthenticated
+ * GitHub API calls are rate-limited per IP, so the page has to read correctly
+ * with no response at all — /releases/latest always resolves to the newest
+ * release regardless.
+ */
+const FALLBACK: ReleaseInfo = { version: null, url: RELEASES_URL, sizeMb: null };
+
+function useLatestRelease(): ReleaseInfo {
+  const [release, setRelease] = useState<ReleaseInfo>(FALLBACK);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void (async () => {
+      try {
+        const res = await fetch(RELEASES_API, {
+          headers: { Accept: 'application/vnd.github+json' },
+          signal: controller.signal,
+        });
+        if (!res.ok) return; // rate-limited or no release yet — keep the fallback
+
+        const data = (await res.json()) as {
+          tag_name?: string;
+          assets?: { name: string; size: number; browser_download_url: string }[];
+        };
+        const apk = (data.assets ?? []).find((a) => a.name.toLowerCase().endsWith('.apk'));
+
+        setRelease({
+          version: data.tag_name ?? null,
+          url: apk?.browser_download_url ?? RELEASES_URL,
+          sizeMb: apk ? apk.size / (1024 * 1024) : null,
+        });
+      } catch {
+        /* offline or aborted — the fallback already reads correctly */
+      }
+    })();
+
+    return () => controller.abort();
+  }, []);
+
+  return release;
+}
 
 export default function AboutPage() {
   const [slug, setSlug] = useState('');
+  const release = useLatestRelease();
 
   const openMosque = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,7 +93,7 @@ export default function AboutPage() {
             device, a slideshow for announcements, and settings you can change from your phone.
           </p>
           <div style={s.ctaRow}>
-            <a href={RELEASES_URL} style={s.primaryCta} rel="noreferrer noopener">
+            <a href={release.url} style={s.primaryCta} rel="noreferrer noopener">
               ⬇ Download for Android TV
             </a>
             <a href="/" style={s.secondaryCta}>
@@ -47,8 +101,19 @@ export default function AboutPage() {
             </a>
           </div>
           <p style={s.fineprint}>
-            Android 7.0 or newer. Sideload the APK, or open the web display on any smart TV
-            browser.
+            {[
+              release.version,
+              release.sizeMb ? `${release.sizeMb.toFixed(1)} MB` : null,
+              'Android 7.0 or newer',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+          <p style={s.fineprint}>
+            Sideload the APK, or open the web display on any smart TV browser.{' '}
+            <a href={RELEASES_URL} style={s.quietLink} rel="noreferrer noopener">
+              Release notes
+            </a>
           </p>
         </header>
 
@@ -175,7 +240,8 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 15,
     textDecoration: 'none',
   },
-  fineprint: { fontSize: 12.5, color: 'rgba(232,240,254,0.4)', margin: 0 },
+  fineprint: { fontSize: 12.5, color: 'rgba(232,240,254,0.4)', margin: '0 0 4px' },
+  quietLink: { color: 'rgba(232,240,254,0.55)', textDecoration: 'underline' },
   section: { marginBottom: 56 },
   h2: { fontSize: 21, fontWeight: 600, margin: '0 0 20px' },
   h3: { fontSize: 15.5, fontWeight: 600, margin: '0 0 6px' },

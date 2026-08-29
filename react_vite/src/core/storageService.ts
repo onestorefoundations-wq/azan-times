@@ -7,6 +7,8 @@
 
 import {
   AppConfig,
+  ConfigSection,
+  SectionVersions,
   MasjidProfile,
   SyncMeta,
   appConfigFromStorageMap,
@@ -37,7 +39,8 @@ const K = {
   pinHash: 'local_admin_pin_hash',
   deviceId: 'device_id',
   pinEnabled: 'local_admin_pin_enabled',
-  pendingConfigPush: 'pending_config_push',
+  dirtySections: 'dirty_config_sections',
+  sectionVersions: 'config_section_versions',
 } as const;
 
 // ── SHA-256 hex (matches Dart sha256.convert(utf8.encode(pin)).toString()) ──
@@ -143,20 +146,60 @@ export const StorageService = {
     localStorage.setItem(K.pinEnabled, String(enabled));
   },
 
-  // ── Pending cloud push ──
+  // ── Section sync state ──
   //
-  // A local edit made while offline used to be lost: saveConfig's push threw,
-  // the local config_version was never bumped, and the next syncNow saw
-  // local == remote and did nothing. This flag survives the reload and makes
-  // syncNow push regardless of the version comparison.
+  // `dirtySections` lists cloud sections edited on this device that have not
+  // reached the cloud yet. It survives a reload, so an edit made offline is
+  // pushed on the next sync instead of being stranded -- previously the push
+  // threw, the version never advanced, and the next sync saw local == remote
+  // and did nothing.
+  //
+  // `sectionVersions` is what this device last saw for each section, compared
+  // section-by-section against the cloud so a device that has been offline for
+  // a week only takes the sections that actually moved.
 
-  isConfigPushPending(): boolean {
-    return localStorage.getItem(K.pendingConfigPush) === 'true';
+  getDirtySections(): ConfigSection[] {
+    const raw = localStorage.getItem(K.dirtySections);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as ConfigSection[]) : [];
+    } catch {
+      return [];
+    }
   },
 
-  setConfigPushPending(pending: boolean): void {
-    if (pending) localStorage.setItem(K.pendingConfigPush, 'true');
-    else localStorage.removeItem(K.pendingConfigPush);
+  markSectionsDirty(sections: ConfigSection[]): void {
+    if (sections.length === 0) return;
+    const merged = Array.from(new Set([...StorageService.getDirtySections(), ...sections]));
+    localStorage.setItem(K.dirtySections, JSON.stringify(merged));
+  },
+
+  clearDirtySections(sections?: ConfigSection[]): void {
+    if (!sections) {
+      localStorage.removeItem(K.dirtySections);
+      return;
+    }
+    // Only clear what was actually pushed; anything edited while the push was
+    // in flight stays queued for the next one.
+    const remaining = StorageService.getDirtySections().filter((s) => !sections.includes(s));
+    if (remaining.length === 0) localStorage.removeItem(K.dirtySections);
+    else localStorage.setItem(K.dirtySections, JSON.stringify(remaining));
+  },
+
+  getSectionVersions(): SectionVersions {
+    const raw = localStorage.getItem(K.sectionVersions);
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? (parsed as SectionVersions) : {};
+    } catch {
+      return {};
+    }
+  },
+
+  saveSectionVersions(versions: SectionVersions): void {
+    localStorage.setItem(K.sectionVersions, JSON.stringify(versions));
   },
 
   // ── Device ID ──

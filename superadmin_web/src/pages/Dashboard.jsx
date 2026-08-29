@@ -12,6 +12,9 @@ export default function Dashboard() {
   // Config States
   const [config, setConfig] = useState(null);
   const [configId, setConfigId] = useState(null);
+  // What the cloud held when this config was loaded, so a save can push only
+  // the sections actually edited instead of stamping the whole document.
+  const [loadedConfig, setLoadedConfig] = useState(null);
   const [configVersion, setConfigVersion] = useState(1);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [activeTab, setActiveTab] = useState('profile');
@@ -64,6 +67,7 @@ export default function Dashboard() {
         setConfigId(data.id);
         setConfigVersion(data.config_version);
         setConfig(data.config_json);
+        setLoadedConfig(data.config_json);
       } else {
         // Fallback seed if config row doesn't exist
         const defaultConfig = {
@@ -131,6 +135,7 @@ export default function Dashboard() {
           setConfigId(newRow.id);
           setConfigVersion(1);
           setConfig(newRow.config_json);
+          setLoadedConfig(newRow.config_json);
         }
       }
     } catch (err) {
@@ -252,19 +257,36 @@ export default function Dashboard() {
       }
     };
 
-    // Atomic bump inside Postgres. Computing nextVersion here and writing it
-    // back let two admins land on the same number and lose one of the saves.
-    const { data: newVersion, error } = await supabase.rpc('increment_and_push_config', {
+    // Push only the sections that changed. Stamping the whole document made
+    // every TV re-pull everything and let two admins overwrite each other's
+    // unrelated edits; the server merges section-wise and bumps each section's
+    // own version.
+    const baseline = loadedConfig ?? {};
+    const sections = {};
+    for (const key of Object.keys(cleanConfig)) {
+      if (JSON.stringify(cleanConfig[key]) !== JSON.stringify(baseline[key])) {
+        sections[key] = cleanConfig[key];
+      }
+    }
+
+    if (Object.keys(sections).length === 0) {
+      alert('No changes to save.');
+      return;
+    }
+
+    const { data: result, error } = await supabase.rpc('push_config_sections', {
       p_tenant_id: tenantId,
-      p_config_json: cleanConfig,
+      p_sections: sections,
       p_device_id: 'superadmin_web',
     });
 
     if (error) {
       alert(`Error updating config: ${error.message}`);
     } else {
-      setConfigVersion(newVersion);
-      alert(`Configuration updated successfully! Version is now ${newVersion}. Connected TV screens will update automatically.`);
+      setConfigVersion(result.config_version);
+      setLoadedConfig(result.config_json);
+      setConfig(result.config_json);
+      alert(`Saved ${Object.keys(sections).length} section(s). Version is now ${result.config_version}. Connected TV screens will update automatically.`);
     }
   };
 

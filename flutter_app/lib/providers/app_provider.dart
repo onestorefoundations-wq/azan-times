@@ -524,6 +524,12 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> saveConfig(AppConfig newConfig) async {
+    // Diff against what is on disk before overwriting it, so the push carries
+    // only the sections this edit actually touched. Two devices editing
+    // different sections then never overwrite each other.
+    final previous = await StorageService.loadConfig();
+    final dirty = newConfig.changedSectionsFrom(previous);
+
     _config = newConfig;
     await StorageService.saveConfig(newConfig);
     _recalculatePrayers();
@@ -532,18 +538,32 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     _restartSlideshowCycle();
     notifyListeners();
 
-    if (isLinked) {
-      _syncStatus = SyncStatus.syncing;
+    // Device-local settings (orientation, PIN, admin theme, local background
+    // path) produce no dirty sections and are never pushed.
+    if (dirty.isEmpty || !isLinked) return;
+
+    await StorageService.markSectionsDirty(dirty);
+
+    final connectivity = await Connectivity().checkConnectivity();
+    if (!connectivity.any((r) => r != ConnectivityResult.none)) {
+      // Queued. Without the dirty marker the edit would be stranded: the local
+      // version never advances, so the next syncNow would see nothing to send.
+      _syncStatus = SyncStatus.offline;
       notifyListeners();
-      try {
-        await SupabaseSyncService.pushConfigToCloud(newConfig);
-        _syncStatus = SyncStatus.synced;
-      } catch (e) {
-        dev.log('[AppProvider] Failed to push config: $e');
-        _syncStatus = SyncStatus.syncError;
-      }
-      notifyListeners();
+      return;
     }
+
+    _syncStatus = SyncStatus.syncing;
+    notifyListeners();
+    try {
+      await SupabaseSyncService.pushConfigToCloud(newConfig, sections: dirty);
+      _syncStatus = SyncStatus.synced;
+    } catch (e) {
+      // The sections stay marked dirty, so syncNow retries.
+      dev.log('[AppProvider] Failed to push config: $e');
+      _syncStatus = SyncStatus.syncError;
+    }
+    notifyListeners();
   }
 
   /// Called when user links/unlinks account to restart media subscription.

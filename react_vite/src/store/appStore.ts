@@ -14,6 +14,7 @@
 import { create } from 'zustand';
 import {
   AppConfig,
+  changedSections,
   defaultAppConfig,
   imagesForOrientation,
   isLinked,
@@ -510,24 +511,35 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     async saveConfig(config: AppConfig) {
+      // Diff against what is on disk before overwriting it, so the push carries
+      // only the sections this edit actually touched. Two devices editing
+      // different sections then never overwrite each other.
+      const previous = StorageService.loadConfig();
+      const dirty = changedSections(previous, config);
+
       set({ config });
       StorageService.saveConfig(config);
       applyConfigSideEffects();
+
+      // Device-local settings (orientation, PIN, admin theme, local background
+      // path) produce no dirty sections and are never pushed.
+      if (dirty.length === 0) return;
+
       if (isLinked(config)) {
+        StorageService.markSectionsDirty(dirty);
         if (!navigator.onLine) {
-          // Queue it. Without this the edit is stranded: the local
-          // config_version never advances, so the next syncNow sees
-          // local == remote and pushes nothing.
-          StorageService.setConfigPushPending(true);
+          // Queued. Without the dirty marker the edit would be stranded: the
+          // local version never advances, so the next syncNow would see nothing
+          // to send.
           set({ syncStatus: 'offline' });
           return;
         }
         set({ syncStatus: 'syncing' });
         try {
-          await SupabaseSync.pushConfigToCloud(config);
+          await SupabaseSync.pushConfigToCloud(config, dirty);
           set({ syncStatus: 'synced' });
         } catch (e) {
-          // pushConfigToCloud leaves the pending flag set, so syncNow retries.
+          // The sections stay marked dirty, so syncNow retries.
           console.warn('[Store] push failed', e);
           set({ syncStatus: 'syncError' });
         }

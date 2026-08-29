@@ -181,28 +181,37 @@ class SupabaseSyncService {
               return;
             }
 
-            // A local edit that has not reached the cloud must not be
-            // clobbered by the echo of somebody else's push; syncNow resolves it.
-            if (StorageService.isConfigPushPending()) {
-              dev.log('[Sync] Ignored realtime event while a local push is pending');
+            final remoteVersions =
+                (newData['section_versions'] as Map<String, dynamic>? ?? {})
+                    .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
+            final remoteJson = newData['config_json'] as Map<String, dynamic>? ?? {};
+            final localVersions = StorageService.getSectionVersions();
+            final dirty = StorageService.getDirtySections();
+
+            // Take only the sections that moved and that this device has no
+            // unpushed edit in, so somebody else's push cannot clobber a local
+            // change that syncNow has yet to send.
+            final toPull = AppConfig.configSections
+                .where((name) =>
+                    remoteJson[name] != null &&
+                    !dirty.contains(name) &&
+                    (remoteVersions[name] ?? 0) > (localVersions[name] ?? 0))
+                .toList();
+
+            if (toPull.isEmpty) {
+              dev.log('[Sync] Realtime event had nothing new for this device');
               return;
             }
 
-            if (newData.isNotEmpty && newData['config_json'] != null) {
-              final configJson = newData['config_json'] as Map<String, dynamic>;
-              final version = (newData['config_version'] as num?)?.toInt() ?? 0;
-
-              // Only apply if remote version is newer than what we last wrote
-              final currentConfig = await StorageService.loadConfig();
-              if (version > currentConfig.meta.supabaseConfigVersion) {
-                dev.log('[Sync] Applying remote version $version (local: ${currentConfig.meta.supabaseConfigVersion})');
-                await _applyConfig(configJson, version);
-                _onConfigUpdated?.call();
-                _onStatusChange?.call(SyncStatus.synced);
-              } else {
-                dev.log('[Sync] Ignored stale realtime event (version $version <= local)');
-              }
-            }
+            final picked = <String, dynamic>{for (final n in toPull) n: remoteJson[n]};
+            await _applySections(
+              picked,
+              remoteVersions,
+              toPull,
+              (newData['config_version'] as num?)?.toInt() ?? 0,
+            );
+            _onConfigUpdated?.call();
+            _onStatusChange?.call(SyncStatus.synced);
           },
         )
         .subscribe((status, [error]) {
@@ -264,43 +273,59 @@ class SupabaseSyncService {
         }, onConflict: 'tenant_id,device_id');
       }
 
-      // 2. Reconcile with the cloud
-      final localVersion = config.meta.supabaseConfigVersion;
-      final pushPending = StorageService.isConfigPushPending();
+      // 2. Reconcile with the cloud, section by section
+      final dirty = StorageService.getDirtySections();
+      final localVersions = StorageService.getSectionVersions();
 
       final response = await client
           .from('mosque_configs')
-          .select('config_version, config_json, updated_at')
+          .select('config_version, config_json, section_versions')
           .eq('tenant_id', tenantId)
-          .order('config_version', ascending: false)
-          .limit(1)
           .maybeSingle();
 
-      final remoteVersion =
-          response != null ? (response['config_version'] as num?)?.toInt() ?? 0 : -1;
+      if (response != null) {
+        // Pull only the sections that actually moved, and never one this device
+        // has an unpushed edit in. A TV offline for a week now takes the phone's
+        // new prayer times without reverting anything it never touched.
+        final remoteVersions =
+            (response['section_versions'] as Map<String, dynamic>? ?? {})
+                .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
+        final remoteJson = response['config_json'] as Map<String, dynamic>? ?? {};
 
-      if (pushPending) {
-        // An edit was made on this device that never reached the cloud. It wins
-        // even when the remote moved on in the meantime: the alternative is
-        // silently discarding something the user typed on this screen.
-        if (remoteVersion > localVersion) {
-          dev.log('[Sync] Conflict: local pending edit over remote v$remoteVersion — local wins');
+        final toPull = <String>[];
+        for (final name in AppConfig.configSections) {
+          if (remoteJson[name] == null) continue;
+          final rv = remoteVersions[name] ?? 0;
+          final lv = localVersions[name] ?? 0;
+          if (rv <= lv) continue;
+          if (dirty.contains(name)) {
+            // Same section edited on both sides. Rare now that sections are
+            // independent; the edit made on this screen wins and we say so.
+            dev.log('[Sync] Conflict in "$name" (remote v$rv) — local edit wins');
+            continue;
+          }
+          toPull.add(name);
         }
-        await pushConfigToCloud(config);
-        _onStatusChange?.call(SyncStatus.synced);
-        return;
+
+        if (toPull.isNotEmpty) {
+          final picked = <String, dynamic>{for (final n in toPull) n: remoteJson[n]};
+          await _applySections(
+            picked,
+            remoteVersions,
+            toPull,
+            (response['config_version'] as num?)?.toInt() ?? 0,
+          );
+          _onConfigUpdated?.call();
+        }
       }
 
-      if (response == null) {
-        await pushConfigToCloud(config);
-      } else if (remoteVersion > localVersion) {
-        dev.log('[Sync] Remote version $remoteVersion > local $localVersion — pulling');
-        await _applyConfig(response['config_json'] as Map<String, dynamic>, remoteVersion);
-        _onConfigUpdated?.call();
-      } else if (localVersion > remoteVersion) {
-        dev.log('[Sync] Local version $localVersion > remote $remoteVersion — pushing');
-        await pushConfigToCloud(config);
+      if (dirty.isNotEmpty || response == null) {
+        await pushConfigToCloud(
+          await StorageService.loadConfig(),
+          sections: response != null ? dirty : null,
+        );
       }
+
       _onStatusChange?.call(SyncStatus.synced);
     } catch (e) {
       dev.log('[Sync] Failed: $e');
@@ -312,35 +337,46 @@ class SupabaseSyncService {
   // Push to cloud
   // ─────────────────────────────────────────────────────────────
 
-  static Future<void> pushConfigToCloud(AppConfig config) async {
+  /// Pushes [sections] (default: everything) as a section-wise merge. The
+  /// server leaves every section not named here exactly as it is, so this can
+  /// never revert another device's work.
+  static Future<void> pushConfigToCloud(AppConfig config, {List<String>? sections}) async {
     final tenantId = config.profile.tenantId;
     if (tenantId == null || tenantId.isEmpty) return;
 
-    final cloudJson = config.toCloudJson();
+    final names = (sections != null && sections.isNotEmpty)
+        ? sections
+        : AppConfig.configSections;
+    final all = config.toCloudSections();
+    final payload = <String, dynamic>{for (final n in names) n: all[n]};
+
     final deviceId = config.meta.deviceId ?? 'unknown';
 
-    // Set before the call and cleared only on success, so a failure at any
+    // Marked before the call and cleared only on success, so a failure at any
     // point (offline, token rejected, process killed mid-flight) leaves a
-    // durable marker for the next syncNow. The old read-increment-write
-    // fallback is gone: it let two devices compute the same next version and
-    // lose one of the writes. increment_and_push_config does it atomically.
-    await StorageService.setConfigPushPending(true);
+    // durable marker for the next syncNow.
+    await StorageService.markSectionsDirty(names);
 
     try {
-      final result = await client.rpc('increment_and_push_config', params: {
+      final result = await client.rpc('push_config_sections', params: {
         'p_tenant_id': tenantId,
-        'p_config_json': cloudJson,
+        'p_sections': payload,
         'p_device_id': deviceId,
-      });
-      final newVersion = (result as num?)?.toInt() ?? 1;
-      dev.log('[Sync] Pushed config to cloud version: $newVersion');
+      }) as Map<String, dynamic>?;
 
-      final updatedMeta = config.meta.copyWith(
+      final newVersion = (result?['config_version'] as num?)?.toInt() ??
+          config.meta.supabaseConfigVersion;
+      final newVersions = (result?['section_versions'] as Map<String, dynamic>? ?? {})
+          .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0));
+
+      dev.log('[Sync] Pushed ${names.length} section(s) → version $newVersion');
+
+      await StorageService.saveSectionVersions(newVersions);
+      await StorageService.saveSyncMeta(config.meta.copyWith(
         supabaseConfigVersion: newVersion,
         lastSuccessfulSync: DateTime.now().millisecondsSinceEpoch,
-      );
-      await StorageService.saveSyncMeta(updatedMeta);
-      await StorageService.setConfigPushPending(false);
+      ));
+      await StorageService.clearDirtySections(names);
     } catch (e) {
       dev.log('[Sync] Failed to push config: $e');
       rethrow;
@@ -350,6 +386,33 @@ class SupabaseSyncService {
   // ─────────────────────────────────────────────────────────────
   // Apply remote config locally
   // ─────────────────────────────────────────────────────────────
+
+  /// Applies [picked] cloud sections onto local storage, recording the versions
+  /// this device is now in step with. Sections not named here -- and all
+  /// device-local meta -- are left exactly as they are.
+  static Future<void> _applySections(
+    Map<String, dynamic> picked,
+    Map<String, int> remoteVersions,
+    List<String> applied,
+    int configVersion,
+  ) async {
+    final current = await StorageService.loadConfig();
+    final next = current.applyCloudSections(picked);
+
+    final versions = Map<String, int>.from(StorageService.getSectionVersions());
+    for (final name in applied) {
+      versions[name] = remoteVersions[name] ?? 0;
+    }
+
+    await StorageService.saveConfig(next.copyWith(
+      meta: next.meta.copyWith(
+        supabaseConfigVersion: configVersion,
+        lastSuccessfulSync: DateTime.now().millisecondsSinceEpoch,
+      ),
+    ));
+    await StorageService.saveSectionVersions(versions);
+    dev.log('[Sync] Applied section(s): ${applied.join(", ")}');
+  }
 
   static Future<void> _applyConfig(Map<String, dynamic> configJson, int newVersion) async {
     final currentConfig = await StorageService.loadConfig();
@@ -380,7 +443,7 @@ class SupabaseSyncService {
 
     final configResponse = await client
         .from('mosque_configs')
-        .select('config_version, config_json')
+        .select('config_version, config_json, section_versions')
         .eq('tenant_id', tenantId)
         .maybeSingle();
 
@@ -408,13 +471,20 @@ class SupabaseSyncService {
         meta: updatedMeta,
       ));
       // Cloud state was just adopted wholesale; nothing local is outstanding.
-      await StorageService.setConfigPushPending(false);
+      await StorageService.saveSectionVersions(
+        (configResponse['section_versions'] as Map<String, dynamic>? ?? {})
+            .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0)),
+      );
+      await StorageService.clearDirtySections();
     } else {
+      // Empty account: this device's existing setup becomes the account's.
       final profileWithTenant = currentConfig.profile.copyWith(tenantId: tenantId);
       await StorageService.saveConfig(currentConfig.copyWith(
         profile: profileWithTenant,
         meta: updatedMeta,
       ));
+      await StorageService.saveSectionVersions({});
+      await StorageService.markSectionsDirty(AppConfig.configSections);
     }
 
     _subscribeRealtime(tenantId);
@@ -470,6 +540,7 @@ class SupabaseSyncService {
       meta: updatedMeta,
     );
     await StorageService.saveConfig(initialConfig);
+    await StorageService.saveSectionVersions({});
 
     await pushConfigToCloud(initialConfig);
 
@@ -508,7 +579,8 @@ class SupabaseSyncService {
 
     await stopSync();
     await AuthSession.clear();
-    await StorageService.setConfigPushPending(false);
+    await StorageService.clearDirtySections();
+    await StorageService.saveSectionVersions({});
 
     // Clear cloud-linked fields; preserve all local settings
     final updatedProfile = currentConfig.profile.copyWith(clearTenantId: true);

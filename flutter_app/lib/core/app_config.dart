@@ -800,9 +800,27 @@ class AppConfig {
     );
   }
 
-  /// Serialize to the Supabase config_json shape.
-  /// IMPORTANT: meta (device-local fields) is excluded, but display config is explicitly synced.
-  Map<String, dynamic> toCloudJson() => {
+  /// The cloud config is split into independently versioned sections. A push
+  /// carries only the sections that actually changed, so a phone editing prayer
+  /// times and a TV editing the theme no longer overwrite each other, and a TV
+  /// that has been offline for a week cannot revert sections it never touched.
+  static const List<String> configSections = [
+    'masjid_profile',
+    'time_adjustments',
+    'features_format',
+    'slideshow_settings',
+    'jumuah_settings',
+    'ticker_settings',
+    'display_settings',
+  ];
+
+  /// Serialize to the Supabase config_json shape, one section at a time.
+  ///
+  /// Orientation, the local background path, the admin theme and the PIN are
+  /// deliberately absent: they describe one physical screen, not the mosque.
+  /// Syncing them rotated every TV in a masjid at once and put the PIN hash in
+  /// a row the public prayer-times endpoint reads from.
+  Map<String, Map<String, dynamic>> toCloudSections() => {
         'masjid_profile': profile.toJson(),
         'time_adjustments': adjustments.toJson(),
         'features_format': features.toJson(),
@@ -810,7 +828,6 @@ class AppConfig {
         'jumuah_settings': jumuah.toJson(),
         'ticker_settings': ticker.toJson(),
         'display_settings': {
-          'custom_background_path': meta.customBackgroundPath,
           'display_font_family': meta.displayFontFamily,
           'primary_text_color': meta.primaryTextColor,
           'secondary_text_color': meta.secondaryTextColor,
@@ -821,22 +838,86 @@ class AppConfig {
           'ticker_bg_color': meta.tickerBgColor,
           'tv_background_color': meta.tvBackgroundColor,
           'theme_id': meta.themeId,
-          'display_orientation': meta.displayOrientation,
-          'admin_light_theme': meta.adminLightTheme,
-          'pin_enabled': meta.pinEnabled,
-          'pin_hash': meta.pinHash,
           'background_images': meta.backgroundImages,
           'active_background_media_id': meta.activeBackgroundMediaId,
         },
       };
 
-  /// Deserialize from Supabase config_json shape.
-  /// Preserves the passed [localMeta] (device-local fields) while applying cloud display settings.
+  Map<String, dynamic> toCloudJson() => toCloudSections();
+
+  /// Which sections differ between this config and [other]. Drives the
+  /// section-wise push, so callers never have to declare what they edited.
+  List<String> changedSectionsFrom(AppConfig other) {
+    final mine = toCloudSections();
+    final theirs = other.toCloudSections();
+    return configSections
+        .where((name) => jsonEncode(mine[name]) != jsonEncode(theirs[name]))
+        .toList();
+  }
+
+  /// Apply a subset of cloud sections onto this config, leaving every other
+  /// section -- and all device-local meta -- untouched.
+  AppConfig applyCloudSections(Map<String, dynamic> sections) {
+    var next = this;
+
+    if (sections['masjid_profile'] != null) {
+      final incoming =
+          MasjidProfile.fromJson(sections['masjid_profile'] as Map<String, dynamic>);
+      // tenantId is how this device knows which account it belongs to; it is
+      // not the cloud's to reassign.
+      next = next.copyWith(profile: incoming.copyWith(tenantId: profile.tenantId));
+    }
+    if (sections['time_adjustments'] != null) {
+      next = next.copyWith(
+          adjustments:
+              TimeAdjustments.fromJson(sections['time_adjustments'] as Map<String, dynamic>));
+    }
+    if (sections['features_format'] != null) {
+      next = next.copyWith(
+          features: FeaturesFormat.fromJson(sections['features_format'] as Map<String, dynamic>));
+    }
+    if (sections['slideshow_settings'] != null) {
+      next = next.copyWith(
+          slideshow:
+              SlideshowSettings.fromJson(sections['slideshow_settings'] as Map<String, dynamic>));
+    }
+    if (sections['jumuah_settings'] != null) {
+      next = next.copyWith(
+          jumuah: JumuahSettings.fromJson(sections['jumuah_settings'] as Map<String, dynamic>));
+    }
+    if (sections['ticker_settings'] != null) {
+      next = next.copyWith(
+          ticker: TickerSettings.fromJson(sections['ticker_settings'] as Map<String, dynamic>));
+    }
+    if (sections['display_settings'] != null) {
+      final ds = sections['display_settings'] as Map<String, dynamic>;
+      next = next.copyWith(
+        meta: next.meta.copyWith(
+          displayFontFamily: ds['display_font_family'] as String?,
+          primaryTextColor: ds['primary_text_color'] as String?,
+          secondaryTextColor: ds['secondary_text_color'] as String?,
+          prayerNameColor: ds['prayer_name_color'] as String?,
+          prayerTimeColor: ds['prayer_time_color'] as String?,
+          dateTextColor: ds['date_text_color'] as String?,
+          tickerTextColor: ds['ticker_text_color'] as String?,
+          tickerBgColor: ds['ticker_bg_color'] as String?,
+          tvBackgroundColor: ds['tv_background_color'] as String?,
+          themeId: ds['theme_id'] as String?,
+          backgroundImages: (ds['background_images'] as List<dynamic>? ?? []).cast<String>(),
+          activeBackgroundMediaId: ds['active_background_media_id'] as String?,
+        ),
+      );
+    }
+
+    return next;
+  }
+
+  /// Deserialize a full Supabase config_json, preserving the passed [localMeta]
+  /// device-local fields. Used when adopting an account's config wholesale at
+  /// link time; incremental sync uses [applyCloudSections] instead.
   factory AppConfig.fromCloudJson(Map<String, dynamic> json, {SyncMeta? localMeta}) {
     final ds = json['display_settings'] as Map<String, dynamic>? ?? {};
     final mergedMeta = (localMeta ?? const SyncMeta()).copyWith(
-      customBackgroundPath: ds['custom_background_path'] as String?,
-      clearCustomBackgroundPath: ds['custom_background_path'] == null,
       displayFontFamily: ds['display_font_family'] as String?,
       primaryTextColor: ds['primary_text_color'] as String?,
       secondaryTextColor: ds['secondary_text_color'] as String?,
@@ -847,10 +928,6 @@ class AppConfig {
       tickerBgColor: ds['ticker_bg_color'] as String?,
       tvBackgroundColor: ds['tv_background_color'] as String?,
       themeId: ds['theme_id'] as String?,
-      displayOrientation: ds['display_orientation'] as String?,
-      adminLightTheme: ds['admin_light_theme'] as bool?,
-      pinEnabled: ds['pin_enabled'] as bool?,
-      pinHash: ds['pin_hash'] as String?,
       backgroundImages: (ds['background_images'] as List<dynamic>? ?? []).cast<String>(),
       activeBackgroundMediaId: ds['active_background_media_id'] as String?,
     );

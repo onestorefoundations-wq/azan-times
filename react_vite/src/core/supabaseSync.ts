@@ -12,8 +12,12 @@
 import { RealtimeChannel } from '@supabase/supabase-js';
 import {
   AppConfig,
+  CONFIG_SECTIONS,
+  ConfigSection,
+  SectionVersions,
   appConfigFromCloudJson,
-  appConfigToCloudJson,
+  appConfigToCloudSections,
+  applyCloudSections,
   defaultSyncMeta,
 } from './appConfig';
 import { APP_VERSION, supabase } from './supabaseClient';
@@ -121,40 +125,48 @@ export const SupabaseSync = {
         );
       }
 
-      const localVersion = config.meta.supabaseConfigVersion;
-      const pushPending = StorageService.isConfigPushPending();
+      const dirty = StorageService.getDirtySections();
+      const localVersions = StorageService.getSectionVersions();
 
       const { data: remote } = await supabase
         .from('mosque_configs')
-        .select('config_version, config_json, updated_at')
+        .select('config_version, config_json, section_versions')
         .eq('tenant_id', tenantId)
-        .order('config_version', { ascending: false })
-        .limit(1)
         .maybeSingle();
 
-      const remoteVersion = remote ? ((remote.config_version as number) ?? 0) : -1;
+      if (remote) {
+        // Pull only the sections that actually moved, and never one this device
+        // has an unpushed edit in. A TV offline for a week now takes the phone's
+        // new prayer times without reverting anything it never touched.
+        const remoteVersions = (remote.section_versions ?? {}) as SectionVersions;
+        const remoteJson = (remote.config_json ?? {}) as Record<string, any>;
 
-      if (pushPending) {
-        // An edit was made on this device that never reached the cloud. It wins
-        // even when the remote moved on in the meantime: the alternative is
-        // silently discarding something the user typed on this screen.
-        if (remoteVersion > localVersion)
-          console.warn(
-            `[Sync] conflict: local pending edit over remote v${remoteVersion} — local wins`,
-          );
-        await SupabaseSync.pushConfigToCloud(config);
-        onStatusChange?.('synced');
-        return;
+        const toPull = CONFIG_SECTIONS.filter((name) => {
+          if (remoteJson[name] == null) return false;
+          const rv = remoteVersions[name] ?? 0;
+          const lv = localVersions[name] ?? 0;
+          if (rv <= lv) return false;
+          if (dirty.includes(name)) {
+            // Same section edited on both sides. Rare now that sections are
+            // independent; the edit made on this screen wins and we say so.
+            console.warn(`[Sync] conflict in "${name}" (remote v${rv}) — local edit wins`);
+            return false;
+          }
+          return true;
+        });
+
+        if (toPull.length > 0) {
+          const picked: Partial<Record<ConfigSection, any>> = {};
+          for (const name of toPull) picked[name] = remoteJson[name];
+          applySections(picked, remoteVersions, toPull, remote.config_version as number);
+          onConfigUpdated?.();
+        }
       }
 
-      if (!remote) {
-        await SupabaseSync.pushConfigToCloud(config);
-      } else if (remoteVersion > localVersion) {
-        await applyConfig(remote.config_json, remoteVersion);
-        onConfigUpdated?.();
-      } else if (localVersion > remoteVersion) {
-        await SupabaseSync.pushConfigToCloud(config);
+      if (dirty.length > 0 || !remote) {
+        await SupabaseSync.pushConfigToCloud(StorageService.loadConfig(), remote ? dirty : undefined);
       }
+
       onStatusChange?.('synced');
     } catch (e) {
       console.warn('[Sync] failed', e);
@@ -162,32 +174,46 @@ export const SupabaseSync = {
     }
   },
 
-  async pushConfigToCloud(config: AppConfig) {
+  /**
+   * Pushes [sections] (default: everything) as a section-wise merge. The server
+   * leaves every section not named here exactly as it is, so this can never
+   * revert another device's work.
+   */
+  async pushConfigToCloud(config: AppConfig, sections?: ConfigSection[]) {
     const tenantId = config.profile.tenantId;
     if (!tenantId) return;
-    const cloudJson = appConfigToCloudJson(config);
+
+    const names = sections && sections.length > 0 ? sections : [...CONFIG_SECTIONS];
+    const all = appConfigToCloudSections(config);
+    const payload: Record<string, unknown> = {};
+    for (const name of names) payload[name] = all[name];
+
     const deviceId = config.meta.deviceId ?? 'unknown';
 
-    // Set before the call, cleared only on success, so a failure at any point
-    // (offline, token rejected, tab closed mid-flight) leaves a durable marker
-    // for the next syncNow.
-    StorageService.setConfigPushPending(true);
+    // Marked before the call and cleared only on success, so a failure at any
+    // point (offline, token rejected, tab closed mid-flight) leaves a durable
+    // marker for the next syncNow.
+    StorageService.markSectionsDirty(names);
 
-    const { data, error } = await supabase.rpc('increment_and_push_config', {
+    const { data, error } = await supabase.rpc('push_config_sections', {
       p_tenant_id: tenantId,
-      p_config_json: cloudJson,
+      p_sections: payload,
       p_device_id: deviceId,
     });
     if (error) throw new Error(error.message);
 
-    const newVersion = Number(data) || 1;
+    const result = (data ?? {}) as {
+      config_version?: number;
+      section_versions?: SectionVersions;
+    };
 
+    StorageService.saveSectionVersions(result.section_versions ?? {});
     StorageService.saveSyncMeta({
       ...config.meta,
-      supabaseConfigVersion: newVersion,
+      supabaseConfigVersion: result.config_version ?? config.meta.supabaseConfigVersion,
       lastSuccessfulSync: Date.now(),
     });
-    StorageService.setConfigPushPending(false);
+    StorageService.clearDirtySections(names);
   },
 
   async linkAccount(identifier: string, password: string): Promise<LinkedAccountResult> {
@@ -196,7 +222,7 @@ export const SupabaseSync = {
 
     const { data: cfg } = await supabase
       .from('mosque_configs')
-      .select('config_version, config_json')
+      .select('config_version, config_json, section_versions')
       .eq('tenant_id', tenantId)
       .maybeSingle();
 
@@ -219,13 +245,17 @@ export const SupabaseSync = {
         meta: updatedMeta,
       });
       // Cloud state was just adopted wholesale; nothing local is outstanding.
-      StorageService.setConfigPushPending(false);
+      StorageService.saveSectionVersions((cfg.section_versions ?? {}) as SectionVersions);
+      StorageService.clearDirtySections();
     } else {
+      // Empty account: this device's existing setup becomes the account's.
       StorageService.saveConfig({
         ...currentConfig,
         profile: { ...currentConfig.profile, tenantId },
         meta: updatedMeta,
       });
+      StorageService.saveSectionVersions({});
+      StorageService.markSectionsDirty([...CONFIG_SECTIONS]);
     }
 
     subscribeRealtime(tenantId);
@@ -266,6 +296,7 @@ export const SupabaseSync = {
       meta: updatedMeta,
     };
     StorageService.saveConfig(initialConfig);
+    StorageService.saveSectionVersions({});
 
     await SupabaseSync.pushConfigToCloud(initialConfig);
 
@@ -299,7 +330,8 @@ export const SupabaseSync = {
 
     await SupabaseSync.stopSync();
     AuthSession.clear();
-    StorageService.setConfigPushPending(false);
+    StorageService.clearDirtySections();
+    StorageService.saveSectionVersions({});
     StorageService.saveConfig({
       ...currentConfig,
       profile: { ...currentConfig.profile, tenantId: null },
@@ -319,15 +351,32 @@ export const SupabaseSync = {
 
 // ── internal ──────────────────────────────────────────────────
 
-async function applyConfig(configJson: Record<string, unknown>, newVersion: number) {
+/**
+ * Applies [picked] cloud sections onto local storage, recording the versions
+ * this device is now in step with. Sections not named here — and all
+ * device-local meta — are left exactly as they are.
+ */
+function applySections(
+  picked: Partial<Record<ConfigSection, any>>,
+  remoteVersions: SectionVersions,
+  applied: ConfigSection[],
+  configVersion: number,
+) {
   const current = StorageService.loadConfig();
-  const updatedMeta = {
-    ...current.meta,
-    supabaseConfigVersion: newVersion,
-    lastSuccessfulSync: Date.now(),
-  };
-  const newConfig = appConfigFromCloudJson(configJson, updatedMeta);
-  StorageService.saveConfig(newConfig);
+  const next = applyCloudSections(current, picked);
+
+  const versions = { ...StorageService.getSectionVersions() };
+  for (const name of applied) versions[name] = remoteVersions[name] ?? 0;
+
+  StorageService.saveConfig({
+    ...next,
+    meta: {
+      ...next.meta,
+      supabaseConfigVersion: configVersion,
+      lastSuccessfulSync: Date.now(),
+    },
+  });
+  StorageService.saveSectionVersions(versions);
 }
 
 function subscribeRealtime(tenantId: string) {
@@ -346,16 +395,28 @@ function subscribeRealtime(tenantId: string) {
         const newData = payload.new as Record<string, any>;
         if (newData?.tenant_id !== tenantId) return; // guard wrong tenant
         if (newData?.config_json == null) return;
-        // A local edit that has not reached the cloud must not be clobbered by
-        // the echo of somebody else's push; syncNow resolves it.
-        if (StorageService.isConfigPushPending()) return;
-        const version = (newData.config_version as number) ?? 0;
-        const current = StorageService.loadConfig();
-        if (version > current.meta.supabaseConfigVersion) {
-          await applyConfig(newData.config_json, version);
-          onConfigUpdated?.();
-          onStatusChange?.('synced');
-        }
+
+        const remoteVersions = (newData.section_versions ?? {}) as SectionVersions;
+        const remoteJson = newData.config_json as Record<string, any>;
+        const localVersions = StorageService.getSectionVersions();
+        const dirty = StorageService.getDirtySections();
+
+        // Take only the sections that moved and that this device has no
+        // unpushed edit in, so somebody else's push cannot clobber a local
+        // change that syncNow has yet to send.
+        const toPull = CONFIG_SECTIONS.filter(
+          (name) =>
+            remoteJson[name] != null &&
+            !dirty.includes(name) &&
+            (remoteVersions[name] ?? 0) > (localVersions[name] ?? 0),
+        );
+        if (toPull.length === 0) return;
+
+        const picked: Partial<Record<ConfigSection, any>> = {};
+        for (const name of toPull) picked[name] = remoteJson[name];
+        applySections(picked, remoteVersions, toPull, (newData.config_version as number) ?? 0);
+        onConfigUpdated?.();
+        onStatusChange?.('synced');
       },
     )
     .subscribe();

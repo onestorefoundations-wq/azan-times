@@ -65,6 +65,14 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Take over immediately instead of waiting for every tab using the old
+        // worker to close. Without these the generated worker only skips
+        // waiting when the registration script messages it, so a fixed worker
+        // installed but never activated and the previous one kept serving --
+        // which is how the navigation hijack below survived its own fix. A
+        // kiosk that is never closed would keep a stale worker indefinitely.
+        skipWaiting: true,
+        clientsClaim: true,
         // The display's worker has scope '/', and its navigation fallback
         // serves the cached index.html for ANY navigation in the origin. Once a
         // device had loaded the display even once, /about and /m/<slug> then

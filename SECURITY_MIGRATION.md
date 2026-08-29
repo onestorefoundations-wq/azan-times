@@ -84,6 +84,25 @@ update admin_users
  where username = '<username>';
 ```
 
+## Later migrations
+
+`03_section_sync.sql` and `04_public_page.sql` run after `02`, in order. Both are
+idempotent.
+
+- **03** gives each config section its own version so concurrent edits stop
+  clobbering each other, and moves orientation, the local background path, the
+  admin theme and the PIN to a device-local tier that never leaves the device.
+  It strips those keys from configs that already stored them.
+- **04** adds the opt-in public prayer-times page (`/m/<slug>`). Off for every
+  mosque until someone turns it on in settings.
+
+Deploy `public-times` alongside the other two Edge Functions.
+
+The web app now needs an SPA fallback, or QR links 404 before React loads:
+`react_vite/public/_redirects` covers Netlify and Cloudflare Pages,
+`react_vite/vercel.json` covers Vercel. On nginx or Apache, add the equivalent
+`try_files $uri /index.html` rule by hand.
+
 ## Verification
 
 Run as anon (a plain `curl` with the anon key) — every one of these must fail:
@@ -95,6 +114,14 @@ curl "$SUPABASE_URL/rest/v1/mosque_configs?select=*" -H "apikey: $ANON"   # empt
 
 With a token for tenant A, `select * from mosque_configs` must return only
 tenant A's row.
+
+For the public page, confirm the payload carries no `display_settings` and so no
+`pin_hash`, and that a disabled or unknown mosque is a flat 404:
+
+```bash
+curl "$SUPABASE_URL/functions/v1/public-times?slug=<enabled-slug>"   # display fields only
+curl "$SUPABASE_URL/functions/v1/public-times?slug=does-not-exist"   # 404
+```
 
 ## Not verified here
 

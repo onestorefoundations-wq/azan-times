@@ -50,6 +50,48 @@ CREATE TABLE IF NOT EXISTS media_library (
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
+-- media_library predates these migrations on at least one project, where it was
+-- created with tenant_id as TEXT while every other table uses UUID. The
+-- CREATE TABLE above is then a no-op, and the RLS policy further down compares
+-- tenant_id to jwt_tenant_id() (UUID), which fails outright:
+--   42883: operator does not exist: text = uuid
+--
+-- Convert it rather than casting at every call site, so the column matches the
+-- rest of the schema and can carry a foreign key. ALTER TYPE rejects any value
+-- that is not a valid UUID, so this fails loudly rather than corrupting data.
+DO $do$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'media_library'
+       AND column_name = 'tenant_id'
+       AND data_type <> 'uuid'
+  ) THEN
+    ALTER TABLE media_library
+      ALTER COLUMN tenant_id TYPE UUID USING tenant_id::uuid;
+  END IF;
+END
+$do$;
+
+-- Only add the foreign key once the column is UUID and every row points at a
+-- real tenant; skipped silently if some row does not, so the migration cannot
+-- fail here on a project with orphaned media.
+DO $do$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'media_library_tenant_id_fkey'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM media_library m
+     WHERE NOT EXISTS (SELECT 1 FROM tenants t WHERE t.id = m.tenant_id)
+  ) THEN
+    ALTER TABLE media_library
+      ADD CONSTRAINT media_library_tenant_id_fkey
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
+  END IF;
+END
+$do$;
+
 CREATE INDEX IF NOT EXISTS media_library_tenant_idx ON media_library (tenant_id, is_deleted);
 
 -- One config row per tenant. The read-increment-write push path always assumed

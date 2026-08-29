@@ -3,9 +3,6 @@
     { "source": "/about", "destination": "/about.html" },
     { "source": "/m", "destination": "/masjid.html" },
     { "source": "/m/:slug", "destination": "/masjid.html" },
-    {
-      "source": "/((?!assets/|icons/|audio/|fonts/|.*\.[a-zA-Z0-9]+$).*)",
-      "destination": "/index.html"
-    }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

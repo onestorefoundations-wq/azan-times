@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import path from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 // Stamped once per build — used by useAppUpdate to detect new deployments.
 const BUILD_TIME = new Date().toISOString();
@@ -18,6 +18,18 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src'),
     },
   },
+  build: {
+    rollupOptions: {
+      input: {
+        // The TV display.
+        main: path.resolve(__dirname, 'index.html'),
+        // The congregation's read-only prayer-times page. A separate entry so a
+        // phone does not download the display's adhan audio, fonts, Leaflet and
+        // settings panel just to read a table of times.
+        masjid: path.resolve(__dirname, 'masjid.html'),
+      },
+    },
+  },
   plugins: [
     // Write /version.json into dist after every build so pollers can detect new deploys.
     {
@@ -29,6 +41,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Registered by hand in main.tsx. Left on 'auto' the plugin injects the
+      // display's service worker and manifest into every HTML entry, including
+      // the congregation page, which has its own lightweight worker.
+      injectRegister: false,
       includeAssets: ['audio/*.mp3', 'fonts/*', 'icons/*'],
       manifest: {
         name: 'Mosque TV Display',
@@ -48,7 +64,9 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,mp3,woff2,ttf,png,svg}'],
         // Never precache version.json — it must always be fetched from the network.
-        globIgnores: ['**/version.json'],
+        // masjid.html is the congregation entry; its own worker caches it at
+        // runtime, and the display must never precache or serve it.
+        globIgnores: ['**/version.json', '**/masjid.html'],
         runtimeCaching: [
           {
             // version.json must NEVER be served from cache — always network.
@@ -76,6 +94,37 @@ export default defineConfig({
         ],
       },
     }),
+    // `vite dev` serves index.html for any unknown path, so without this /m/<slug>
+    // would render the display in development while serving the congregation
+    // page in production. Mirrors the _redirects / vercel.json rewrites.
+    {
+      name: 'dev-serve-masjid-entry',
+      configureServer(server: { middlewares: { use: (fn: any) => void } }) {
+        server.middlewares.use((req: any, _res: any, next: any) => {
+          if (req.url && /^\/m(\/|$|\?)/.test(req.url)) req.url = '/masjid.html';
+          next();
+        });
+      },
+    },
+    // VitePWA injects the display's manifest link into every HTML entry. The
+    // congregation page declares its own first, and two manifest links is a
+    // spec-order coin flip, so drop the injected one from that entry.
+    {
+      name: 'strip-display-manifest-from-masjid',
+      // closeBundle, not transformIndexHtml: VitePWA injects its link after any
+      // post-enforced transform hook, so the only place it is reliably gone is
+      // the file on disk.
+      closeBundle() {
+        const file = 'dist/masjid.html';
+        if (!existsSync(file)) return;
+        const html = readFileSync(file, 'utf8');
+        const stripped = html.replace(
+          /[ \t]*<link[^>]*rel="manifest"(?![^>]*masjid\.webmanifest)[^>]*>\r?\n?/g,
+          '',
+        );
+        if (stripped !== html) writeFileSync(file, stripped);
+      },
+    },
   ],
   server: {
     port: 5173,

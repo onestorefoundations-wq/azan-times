@@ -98,10 +98,17 @@ idempotent.
 
 Deploy `public-times` alongside the other two Edge Functions.
 
-The web app now needs an SPA fallback, or QR links 404 before React loads:
+The web app builds two entries now — `index.html` for the display and
+`masjid.html` for the congregation page — so the host needs rewrites, or QR
+links 404 before any JS loads:
+
+    /m, /m/*   ->  /masjid.html
+    everything else (non-asset)  ->  /index.html
+
 `react_vite/public/_redirects` covers Netlify and Cloudflare Pages,
-`react_vite/vercel.json` covers Vercel. On nginx or Apache, add the equivalent
-`try_files $uri /index.html` rule by hand.
+`react_vite/vercel.json` covers Vercel. On nginx or Apache write the equivalent
+by hand — serving `/m/<slug>` from `index.html` loads the whole TV display on a
+phone instead of the prayer-times page.
 
 ## Verification
 

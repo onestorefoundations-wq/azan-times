@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1b2a" />
+    <!-- The congregation's manifest, not the TV display's: installing from here
+         gives a portrait, standalone prayer-times app rather than a fullscreen
+         kiosk. Declared before anything else can inject its own. -->
+    <link rel="manifest" href="/masjid.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Adhan and Iqamah times for your mosque, available offline." />
+    <title>Prayer Times</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/public-main.tsx"></script>
+  </body>
+</html>

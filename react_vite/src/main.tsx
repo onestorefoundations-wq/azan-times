@@ -4,6 +4,7 @@ import App from './App';
 import { StorageService } from './core/storageService';
 import { DeviceService } from './core/deviceService';
 import './styles/index.css';
+import { registerSW } from 'virtual:pwa-register';
 
 async function bootstrap() {
   // Seed local storage defaults + generate device id before first render.
@@ -15,6 +16,10 @@ async function bootstrap() {
       <App />
     </React.StrictMode>,
   );
+
+  // Registered here rather than injected into every HTML entry, so the
+  // display's service worker never lands on the congregation page.
+  registerSW({ immediate: true });
 }
 
 void bootstrap();

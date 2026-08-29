@@ -1,4 +1,7 @@
-# SPA fallback (Netlify / Cloudflare Pages).
-# /m/<slug> is typed in or opened from a QR scan rather than navigated to
-# client-side, so without this the host 404s before React ever loads.
-/*  /index.html  200
+# The congregation's prayer-times page is its own bundle, so /m/<slug> must
+# serve masjid.html rather than the display's index.html. Both are opened by
+# typing or scanning a link, not by client-side navigation, so without these
+# the host 404s before any JS loads.
+/m           /masjid.html   200
+/m/*         /masjid.html   200
+/*           /index.html    200

@@ -4,8 +4,9 @@
  * as a PWA so the congregation keeps the times on their phone.
  *
  * Deliberately isolated from the rest of the app:
- *  - it never imports the store, the settings bundle or AuthSession, so there is
- *    no code path from here into anything that can edit;
+ *  - it is its own Vite entry (masjid.html) and imports neither the store, the
+ *    settings bundle, AuthSession nor the router, so there is no code path from
+ *    here into anything that can edit and no TV asset in its bundle;
  *  - it talks only to the `public-times` Edge Function, which returns a
  *    whitelist of display fields;
  *  - it caches the payload and recomputes times locally with the same `adhan`
@@ -13,7 +14,6 @@
  *    point of installing it.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
 import { AppConfig, appConfigFromCloudJson } from '../core/appConfig';
 import { PrayerConfig, calculatePrayers, getNextPrayer } from '../core/prayerEngine';
 import { FUNCTIONS_URL } from '../core/supabaseConfig';
@@ -84,28 +84,16 @@ const countdown = (target: Date, now: Date): string => {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 };
 
-export default function PublicTimes() {
-  const params = useParams<{ slug?: string }>();
-  const slug = (params.slug ?? lastViewedSlug() ?? '').toLowerCase();
+export default function PublicTimes({ slug: slugProp }: { slug?: string | null }) {
+  // Installed from the home screen the app opens /m with no slug, so fall back
+  // to the last mosque this phone looked at.
+  const slug = (slugProp ?? lastViewedSlug() ?? '').toLowerCase();
 
   const [payload, setPayload] = useState<PublicPayload | null>(() =>
     slug ? (readCache(slug)?.payload ?? null) : null,
   );
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
-
-  // Point the installer at the congregation manifest instead of the TV's, so
-  // "Add to home screen" here installs a portrait, standalone prayer-times app
-  // rather than the fullscreen kiosk display.
-  useEffect(() => {
-    const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
-    if (!link) return;
-    const previous = link.href;
-    link.href = '/masjid.webmanifest';
-    return () => {
-      link.href = previous;
-    };
-  }, []);
 
   // A minute is enough: this page shows times and a coarse countdown.
   useEffect(() => {

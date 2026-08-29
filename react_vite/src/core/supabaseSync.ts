@@ -2,11 +2,12 @@
  * supabaseSync.ts
  * Cloud sync. Port of flutter_app/lib/core/supabase_sync_service.dart.
  * Version-gated pull/push, realtime config channel, device heartbeat, and
- * link/register/disconnect — wire-compatible with the Flutter app.
+ * link/register/disconnect.
  *
- * ⚠️ Auth mirrors the existing system: a direct table query compares the
- * password to password_hash (same as the Flutter client). Harden with an
- * Edge Function for production.
+ * Auth runs through the `auth` Edge Function (see supabase/functions/auth):
+ * the client posts credentials, gets back a tenant-scoped JWT, and every
+ * Supabase call after that is filtered by the RLS policies in
+ * supabase/02_security_hardening.sql. The client never reads admin_users.
  */
 import { RealtimeChannel } from '@supabase/supabase-js';
 import {
@@ -16,6 +17,7 @@ import {
   defaultSyncMeta,
 } from './appConfig';
 import { APP_VERSION, supabase } from './supabaseClient';
+import { AuthSession } from './authSession';
 import { DeviceService } from './deviceService';
 import { StorageService } from './storageService';
 
@@ -74,6 +76,7 @@ export const SupabaseSync = {
       await supabase.removeChannel(channel);
       channel = null;
     }
+    activeTenantId = null;
   },
 
   async syncNow() {
@@ -90,8 +93,21 @@ export const SupabaseSync = {
       return;
     }
 
+    if (!AuthSession.getToken()) {
+      // Linked but the token is gone (cleared storage, or linked by a build
+      // predating token auth). Local config keeps working; sync cannot.
+      console.warn('[Sync] linked tenant with no auth token — re-link required');
+      onStatusChange?.('syncError');
+      return;
+    }
+
     onStatusChange?.('syncing');
     try {
+      if (!(await AuthSession.refreshIfNeeded())) {
+        onStatusChange?.('syncError');
+        return;
+      }
+
       if (deviceId) {
         await supabase.from('device_registry').upsert(
           {
@@ -101,11 +117,13 @@ export const SupabaseSync = {
             online_status: true,
             app_version: APP_VERSION,
           },
-          { onConflict: 'device_id' },
+          { onConflict: 'tenant_id,device_id' },
         );
       }
 
       const localVersion = config.meta.supabaseConfigVersion;
+      const pushPending = StorageService.isConfigPushPending();
+
       const { data: remote } = await supabase
         .from('mosque_configs')
         .select('config_version, config_json, updated_at')
@@ -114,22 +132,30 @@ export const SupabaseSync = {
         .limit(1)
         .maybeSingle();
 
-      if (remote) {
-        const remoteVersion = (remote.config_version as number) ?? 0;
-        if (remoteVersion > localVersion) {
-          await applyConfig(remote.config_json, remoteVersion);
-          onConfigUpdated?.();
-          onStatusChange?.('synced');
-        } else if (localVersion > remoteVersion) {
-          await SupabaseSync.pushConfigToCloud(config);
-          onStatusChange?.('synced');
-        } else {
-          onStatusChange?.('synced');
-        }
-      } else {
+      const remoteVersion = remote ? ((remote.config_version as number) ?? 0) : -1;
+
+      if (pushPending) {
+        // An edit was made on this device that never reached the cloud. It wins
+        // even when the remote moved on in the meantime: the alternative is
+        // silently discarding something the user typed on this screen.
+        if (remoteVersion > localVersion)
+          console.warn(
+            `[Sync] conflict: local pending edit over remote v${remoteVersion} — local wins`,
+          );
         await SupabaseSync.pushConfigToCloud(config);
         onStatusChange?.('synced');
+        return;
       }
+
+      if (!remote) {
+        await SupabaseSync.pushConfigToCloud(config);
+      } else if (remoteVersion > localVersion) {
+        await applyConfig(remote.config_json, remoteVersion);
+        onConfigUpdated?.();
+      } else if (localVersion > remoteVersion) {
+        await SupabaseSync.pushConfigToCloud(config);
+      }
+      onStatusChange?.('synced');
     } catch (e) {
       console.warn('[Sync] failed', e);
       onStatusChange?.('syncError');
@@ -142,60 +168,31 @@ export const SupabaseSync = {
     const cloudJson = appConfigToCloudJson(config);
     const deviceId = config.meta.deviceId ?? 'unknown';
 
-    let newVersion: number;
-    const { data: rpcResult, error: rpcError } = await supabase.rpc('increment_and_push_config', {
+    // Set before the call, cleared only on success, so a failure at any point
+    // (offline, token rejected, tab closed mid-flight) leaves a durable marker
+    // for the next syncNow.
+    StorageService.setConfigPushPending(true);
+
+    const { data, error } = await supabase.rpc('increment_and_push_config', {
       p_tenant_id: tenantId,
       p_config_json: cloudJson,
       p_device_id: deviceId,
     });
+    if (error) throw new Error(error.message);
 
-    if (!rpcError && rpcResult != null) {
-      newVersion = Number(rpcResult) || 1;
-    } else {
-      // Fallback: legacy read-increment-write.
-      const { data: current } = await supabase
-        .from('mosque_configs')
-        .select('id, config_version')
-        .eq('tenant_id', tenantId)
-        .maybeSingle();
-      newVersion = current ? ((current.config_version as number) ?? 0) + 1 : 1;
-      if (current) {
-        await supabase
-          .from('mosque_configs')
-          .update({
-            config_version: newVersion,
-            config_json: cloudJson,
-            updated_at: new Date().toISOString(),
-            updated_by: deviceId,
-          })
-          .eq('id', current.id as string);
-      } else {
-        await supabase
-          .from('mosque_configs')
-          .insert({ tenant_id: tenantId, config_version: newVersion, config_json: cloudJson, updated_by: deviceId });
-      }
-    }
+    const newVersion = Number(data) || 1;
 
     StorageService.saveSyncMeta({
       ...config.meta,
       supabaseConfigVersion: newVersion,
       lastSuccessfulSync: Date.now(),
     });
+    StorageService.setConfigPushPending(false);
   },
 
   async linkAccount(identifier: string, password: string): Promise<LinkedAccountResult> {
-    const { data: user } = await supabase
-      .from('admin_users')
-      .select('tenant_id, username, mobile, email')
-      .or(`username.eq."${identifier}",mobile.eq."${identifier}",email.eq."${identifier}"`)
-      .eq('password_hash', password)
-      .maybeSingle();
-
-    if (!user) throw new Error('Invalid username/mobile/email or password');
-    const tenantId = user.tenant_id as string;
-
-    const { data: tenant } = await supabase.from('tenants').select('name').eq('id', tenantId).maybeSingle();
-    const mosqueName = (tenant?.name as string) ?? 'Linked Mosque';
+    const session = await AuthSession.login(identifier, password);
+    const tenantId = session.tenantId;
 
     const { data: cfg } = await supabase
       .from('mosque_configs')
@@ -206,10 +203,10 @@ export const SupabaseSync = {
     const currentConfig = StorageService.loadConfig();
     const updatedMeta = {
       ...currentConfig.meta,
-      linkedUsername: (user.username as string) ?? null,
-      linkedMobile: (user.mobile as string) ?? null,
-      linkedEmail: (user.email as string) ?? null,
-      linkedMosqueName: mosqueName,
+      linkedUsername: session.username || null,
+      linkedMobile: session.mobile || null,
+      linkedEmail: session.email || null,
+      linkedMosqueName: session.mosqueName,
       supabaseConfigVersion: cfg ? ((cfg.config_version as number) ?? 0) : 0,
       lastSuccessfulSync: Date.now(),
     };
@@ -221,6 +218,8 @@ export const SupabaseSync = {
         profile: { ...newConfig.profile, tenantId },
         meta: updatedMeta,
       });
+      // Cloud state was just adopted wholesale; nothing local is outstanding.
+      StorageService.setConfigPushPending(false);
     } else {
       StorageService.saveConfig({
         ...currentConfig,
@@ -232,10 +231,10 @@ export const SupabaseSync = {
     subscribeRealtime(tenantId);
     return {
       tenantId,
-      username: (user.username as string) ?? '',
-      mobile: (user.mobile as string) ?? '',
-      email: (user.email as string) ?? '',
-      mosqueName,
+      username: session.username,
+      mobile: session.mobile,
+      email: session.email,
+      mosqueName: session.mosqueName,
     };
   },
 
@@ -246,60 +245,61 @@ export const SupabaseSync = {
     mobile?: string;
     email?: string;
   }): Promise<LinkedAccountResult> {
-    const { mosqueName, username, password, mobile, email } = params;
-
-    const { data: existing } = await supabase.from('admin_users').select('id').eq('username', username).maybeSingle();
-    if (existing) throw new Error('Username already registered');
-
-    const { data: tenant, error: tErr } = await supabase
-      .from('tenants')
-      .insert({ name: mosqueName })
-      .select()
-      .single();
-    if (tErr || !tenant) throw new Error(tErr?.message ?? 'Failed to create tenant');
-    const tenantId = tenant.id as string;
-
-    const { data: user, error: uErr } = await supabase
-      .from('admin_users')
-      .insert({ tenant_id: tenantId, username, mobile, email, password_hash: password })
-      .select()
-      .single();
-    if (uErr || !user) throw new Error(uErr?.message ?? 'Failed to create user');
+    // Tenant + user are created inside app_register() in one transaction, so a
+    // duplicate username can no longer leave an orphaned tenant behind.
+    const session = await AuthSession.register(params);
+    const tenantId = session.tenantId;
 
     const currentConfig = StorageService.loadConfig();
-    const initialConfig: AppConfig = {
-      ...currentConfig,
-      profile: { ...currentConfig.profile, name: mosqueName, tenantId },
-    };
-
-    await supabase
-      .from('mosque_configs')
-      .insert({ tenant_id: tenantId, config_version: 1, config_json: appConfigToCloudJson(initialConfig) });
-
     const updatedMeta = {
       ...currentConfig.meta,
-      linkedUsername: (user.username as string) ?? username,
-      linkedMobile: (user.mobile as string) ?? null,
-      linkedEmail: (user.email as string) ?? null,
-      linkedMosqueName: mosqueName,
-      supabaseConfigVersion: 1,
+      linkedUsername: session.username || params.username,
+      linkedMobile: session.mobile || null,
+      linkedEmail: session.email || null,
+      linkedMosqueName: session.mosqueName,
+      supabaseConfigVersion: 0,
       lastSuccessfulSync: Date.now(),
     };
-    StorageService.saveConfig({ ...initialConfig, meta: updatedMeta });
+    const initialConfig: AppConfig = {
+      ...currentConfig,
+      profile: { ...currentConfig.profile, name: params.mosqueName, tenantId },
+      meta: updatedMeta,
+    };
+    StorageService.saveConfig(initialConfig);
+
+    await SupabaseSync.pushConfigToCloud(initialConfig);
 
     subscribeRealtime(tenantId);
     return {
       tenantId,
-      username: (user.username as string) ?? username,
-      mobile: (user.mobile as string) ?? '',
-      email: (user.email as string) ?? '',
-      mosqueName,
+      username: session.username || params.username,
+      mobile: session.mobile,
+      email: session.email,
+      mosqueName: session.mosqueName,
     };
   },
 
   async disconnectAccount() {
-    await SupabaseSync.stopSync();
     const currentConfig = StorageService.loadConfig();
+    const tenantId = currentConfig.profile.tenantId;
+    const deviceId = currentConfig.meta.deviceId ?? DeviceService.getDeviceId();
+
+    // Clear the heartbeat latch while the token is still valid.
+    if (tenantId && deviceId && isOnline() && AuthSession.getToken()) {
+      try {
+        await supabase
+          .from('device_registry')
+          .update({ online_status: false })
+          .eq('tenant_id', tenantId)
+          .eq('device_id', deviceId);
+      } catch (e) {
+        console.warn('[Sync] could not clear online_status', e);
+      }
+    }
+
+    await SupabaseSync.stopSync();
+    AuthSession.clear();
+    StorageService.setConfigPushPending(false);
     StorageService.saveConfig({
       ...currentConfig,
       profile: { ...currentConfig.profile, tenantId: null },
@@ -346,6 +346,9 @@ function subscribeRealtime(tenantId: string) {
         const newData = payload.new as Record<string, any>;
         if (newData?.tenant_id !== tenantId) return; // guard wrong tenant
         if (newData?.config_json == null) return;
+        // A local edit that has not reached the cloud must not be clobbered by
+        // the echo of somebody else's push; syncNow resolves it.
+        if (StorageService.isConfigPushPending()) return;
         const version = (newData.config_version as number) ?? 0;
         const current = StorageService.loadConfig();
         if (version > current.meta.supabaseConfigVersion) {

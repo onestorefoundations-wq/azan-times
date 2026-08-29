@@ -1,35 +1,28 @@
 import { useState } from 'react';
-import { supabase } from '../supabaseClient';
+import { AuthSession } from '../authSession';
 import { useNavigate, Link } from 'react-router-dom';
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
-    // Since we are bypassing Supabase Auth for absolute simplicity:
-    // We are checking the custom admin_users table.
-    // Note: This relies on exact password match (plain text or pre-hashed on client).
-    const pwd = password || "";
-    
-    const { data, error } = await supabase
-      .from('admin_users')
-      .select('tenant_id, username')
-      .eq('username', username)
-      .eq('password_hash', pwd)
-      .single();
-
-    if (error || !data) {
-      setError('Invalid username or password');
-    } else {
-      localStorage.setItem('tenant_id', data.tenant_id);
-      localStorage.setItem('username', data.username);
+    // The password is checked server-side (bcrypt, inside app_login) and we get
+    // back a tenant-scoped JWT. Nothing here ever reads admin_users.
+    try {
+      await AuthSession.login(username, password);
       navigate('/');
+    } catch (err) {
+      setError(err.message || 'Invalid username or password');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -49,17 +42,17 @@ export default function Login() {
           />
         </div>
         <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px' }}>Password (Optional):</label>
+          <label style={{ display: 'block', marginBottom: '5px' }}>Password:</label>
           <input 
             type="password" 
             value={password} 
             onChange={(e) => setPassword(e.target.value)} 
             style={{ width: '100%', padding: '8px' }}
-            placeholder="Leave blank if you registered without one"
+            required
           />
         </div>
-        <button type="submit" style={{ width: '100%', padding: '10px', background: '#007BFF', color: 'white', border: 'none', borderRadius: '4px' }}>
-          Login
+        <button disabled={loading} type="submit" style={{ width: '100%', padding: '10px', background: '#007BFF', color: 'white', border: 'none', borderRadius: '4px' }}>
+          {loading ? 'Signing in...' : 'Login'}
         </button>
       </form>
       <div style={{ marginTop: '15px', textAlign: 'center' }}>

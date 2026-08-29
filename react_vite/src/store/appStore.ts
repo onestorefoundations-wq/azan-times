@@ -514,11 +514,20 @@ export const useAppStore = create<AppState>((set, get) => {
       StorageService.saveConfig(config);
       applyConfigSideEffects();
       if (isLinked(config)) {
+        if (!navigator.onLine) {
+          // Queue it. Without this the edit is stranded: the local
+          // config_version never advances, so the next syncNow sees
+          // local == remote and pushes nothing.
+          StorageService.setConfigPushPending(true);
+          set({ syncStatus: 'offline' });
+          return;
+        }
         set({ syncStatus: 'syncing' });
         try {
           await SupabaseSync.pushConfigToCloud(config);
           set({ syncStatus: 'synced' });
         } catch (e) {
+          // pushConfigToCloud leaves the pending flag set, so syncNow retries.
           console.warn('[Store] push failed', e);
           set({ syncStatus: 'syncError' });
         }

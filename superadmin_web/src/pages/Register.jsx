@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { AuthSession } from '../authSession';
 import { useNavigate, Link } from 'react-router-dom';
 
 export default function Register() {
@@ -17,42 +18,16 @@ export default function Register() {
     setLoading(true);
 
     try {
-      // 1. Check if username already exists
-      const { data: existingUser } = await supabase
-        .from('admin_users')
-        .select('id')
-        .eq('username', username)
-        .maybeSingle();
-
-      if (existingUser) {
-        setError('Username or Mobile Number already taken.');
-        setLoading(false);
-        return;
-      }
-
-      // 2. Create the Tenant (Mosque)
-      const { data: tenantData, error: tenantError } = await supabase
-        .from('tenants')
-        .insert([{ name: mosqueName }])
-        .select()
-        .single();
-
-      if (tenantError || !tenantData) throw tenantError;
-
-      // 3. Create the Admin User (empty string if no password provided)
-      const { data: userData, error: userError } = await supabase
-        .from('admin_users')
-        .insert([{
-          tenant_id: tenantData.id,
-          username: username,
-          mobile: username.match(/^\d+$/) ? username : null,
-          email: email || null,
-          password_hash: password || ""
-        }])
-        .select()
-        .single();
-
-      if (userError || !userData) throw userError;
+      // Tenant + admin user are created together inside app_register(), which
+      // bcrypts the password. Doing it client-side previously left an orphaned
+      // tenant behind whenever the user insert failed.
+      const session = await AuthSession.register({
+        mosqueName,
+        username,
+        password,
+        mobile: username.match(/^\d+$/) ? username : null,
+        email: email || null,
+      });
 
       // 3.5 Create the default Mosque Config
       const defaultConfig = {
@@ -105,23 +80,19 @@ export default function Register() {
         slide_assets: []
       };
 
-      const { error: configError } = await supabase
-        .from('mosque_configs')
-        .insert([{
-          tenant_id: tenantData.id,
-          config_version: 1,
-          config_json: defaultConfig
-        }]);
+      const { error: configError } = await supabase.rpc('increment_and_push_config', {
+        p_tenant_id: session.tenantId,
+        p_config_json: defaultConfig,
+        p_device_id: 'superadmin_web',
+      });
 
       if (configError) throw configError;
 
-      // 4. Auto-login
-      localStorage.setItem('tenant_id', tenantData.id);
-      localStorage.setItem('username', userData.username);
+      // AuthSession.register already stored the token, tenant_id and username.
       navigate('/');
     } catch (err) {
       console.error(err);
-      setError('An error occurred during registration. Please try again.');
+      setError(err.message || 'An error occurred during registration. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -165,13 +136,15 @@ export default function Register() {
           />
         </div>
         <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px' }}>Password (Optional):</label>
+          <label style={{ display: 'block', marginBottom: '5px' }}>Password:</label>
           <input 
             type="password" 
             value={password} 
             onChange={(e) => setPassword(e.target.value)} 
             style={{ width: '100%', padding: '8px' }}
-            placeholder="Leave blank for passwordless"
+            placeholder="At least 6 characters"
+            minLength={6}
+            required
           />
         </div>
         <button disabled={loading} type="submit" style={{ width: '100%', padding: '10px', background: '#28A745', color: 'white', border: 'none', borderRadius: '4px' }}>

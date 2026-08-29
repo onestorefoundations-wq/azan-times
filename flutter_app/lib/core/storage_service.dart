@@ -21,6 +21,7 @@ class StorageService {
   static const _kLocalAdminPinHash = 'local_admin_pin_hash';
   static const _kDeviceId = 'device_id';
   static const _kPinEnabled = 'local_admin_pin_enabled';
+  static const _kPendingConfigPush = 'pending_config_push';
 
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -142,6 +143,25 @@ class StorageService {
   /// Enable or disable the local PIN gate.
   static Future<void> setPinEnabled(bool enabled) async {
     await _prefs.setBool(_kPinEnabled, enabled);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Pending cloud push
+  //
+  // A local edit made while offline used to be lost: the push threw, the local
+  // config_version was never bumped, and the next syncNow saw local == remote
+  // and did nothing. This flag survives a restart and makes syncNow push
+  // regardless of the version comparison.
+  // ─────────────────────────────────────────────────────────────
+
+  static bool isConfigPushPending() => _prefs.getBool(_kPendingConfigPush) ?? false;
+
+  static Future<void> setConfigPushPending(bool pending) async {
+    if (pending) {
+      await _prefs.setBool(_kPendingConfigPush, true);
+    } else {
+      await _prefs.remove(_kPendingConfigPush);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────

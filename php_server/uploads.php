@@ -2,7 +2,16 @@
 header('Content-Type: application/json');
 
 // Configuration
-$expectedApiKey = 'EverY0NeKnoW$1T'; // Change this in production
+// This key shipped inside published app bundles, so the old value is public.
+// Rotate it, set it in the server environment, and set the same value as the
+// media-proxy Edge Function's PHP_API_KEY secret. Only that function should
+// hold it -- no client does any more.
+$expectedApiKey = getenv('PHP_API_KEY') ?: '';
+if ($expectedApiKey === '') {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'PHP_API_KEY is not configured on the server']);
+    exit;
+}
 $uploadDir = __DIR__ . '/uploads/';
 $maxFileSize = 5 * 1024 * 1024; // 5MB
 $allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];

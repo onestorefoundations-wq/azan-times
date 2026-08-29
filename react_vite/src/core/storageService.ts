@@ -37,6 +37,7 @@ const K = {
   pinHash: 'local_admin_pin_hash',
   deviceId: 'device_id',
   pinEnabled: 'local_admin_pin_enabled',
+  pendingConfigPush: 'pending_config_push',
 } as const;
 
 // ── SHA-256 hex (matches Dart sha256.convert(utf8.encode(pin)).toString()) ──
@@ -140,6 +141,22 @@ export const StorageService = {
 
   setPinEnabled(enabled: boolean): void {
     localStorage.setItem(K.pinEnabled, String(enabled));
+  },
+
+  // ── Pending cloud push ──
+  //
+  // A local edit made while offline used to be lost: saveConfig's push threw,
+  // the local config_version was never bumped, and the next syncNow saw
+  // local == remote and did nothing. This flag survives the reload and makes
+  // syncNow push regardless of the version comparison.
+
+  isConfigPushPending(): boolean {
+    return localStorage.getItem(K.pendingConfigPush) === 'true';
+  },
+
+  setConfigPushPending(pending: boolean): void {
+    if (pending) localStorage.setItem(K.pendingConfigPush, 'true');
+    else localStorage.removeItem(K.pendingConfigPush);
   },
 
   // ── Device ID ──

@@ -215,7 +215,7 @@ export default function TabCloudAccount({ onConfigRefreshed }: { onConfigRefresh
                 }
               />
               <SettingsFormField label="Password" helpText="Minimum 6 characters recommended.">
-                <TextInput type="password" value={regPw} placeholder="Minimum 6 characters recommended" onChange={(e) => setRegPw(e.target.value)} />
+                <TextInput type="password" value={regPw} placeholder="Minimum 6 characters" onChange={(e) => setRegPw(e.target.value)} />
               </SettingsFormField>
               <PrimaryButton onClick={loading ? undefined : register} style={{ width: '100%' }}>
                 {loading ? 'Creating Account…' : 'Create Account & Link Display'}

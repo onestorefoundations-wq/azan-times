@@ -1,3 +1,11 @@
+-- ⚠️ SUPERSEDED IN PART BY 02_security_hardening.sql.
+-- The RLS policies below are all USING (true): with the anon key embedded in
+-- every shipped bundle, they give any user read/write access to every
+-- tenant's data and read access to every password. Run 02 immediately after
+-- this file on a fresh project; never run this one on its own.
+-- 02 also adds the media_library table and the increment_and_push_config RPC,
+-- both of which the clients already call but which were never in this file.
+
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 

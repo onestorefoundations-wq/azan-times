@@ -6,6 +6,7 @@ Two functions back the security model introduced in `../02_security_hardening.sq
 | --- | --- |
 | `auth` | Login / register / refresh. Verifies the password server-side (bcrypt, inside `app_login`) and mints a tenant-scoped JWT. |
 | `media-proxy` | Uploads and deletes on the PHP media server. Holds the shared PHP key and enforces tenant ownership on delete. |
+| `public-times` | Read-only prayer times for the congregation's page (`/m/<slug>`). Unauthenticated; returns a whitelist of display fields only. |
 
 ## Why they exist
 
@@ -25,13 +26,22 @@ client role, and passwords are bcrypt digests.
 ## Deploy
 
 ```bash
-supabase functions deploy auth        --no-verify-jwt
-supabase functions deploy media-proxy --no-verify-jwt
+supabase functions deploy auth         --no-verify-jwt
+supabase functions deploy media-proxy  --no-verify-jwt
+supabase functions deploy public-times --no-verify-jwt
 ```
 
-`--no-verify-jwt` on both: `auth` is by definition called without a token, and
+`--no-verify-jwt` on all three: `auth` is by definition called without a token,
 `media-proxy` verifies our own HS256 tokens itself rather than deferring to
-Supabase Auth.
+Supabase Auth, and `public-times` is public on purpose.
+
+`public-times` is the one endpoint reachable with no credential at all, so it
+returns only what `public_prayer_times()` selects: a hard-coded whitelist that
+excludes `display_settings`, the block where a stale client could leave a PIN
+hash. It is a whitelist rather than a blacklist precisely so that adding a new
+setting later cannot leak it by default. Mosques are invisible to it until they
+opt in (`public_page_enabled`), and a wrong slug and a disabled mosque return the
+same flat 404 so it cannot be used to enumerate accounts.
 
 ## Secrets
 

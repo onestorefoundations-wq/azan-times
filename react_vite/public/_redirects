@@ -1,0 +1,4 @@
+# SPA fallback (Netlify / Cloudflare Pages).
+# /m/<slug> is typed in or opened from a QR scan rather than navigated to
+# client-side, so without this the host 404s before React ever loads.
+/*  /index.html  200

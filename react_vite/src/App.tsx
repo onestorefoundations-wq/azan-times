@@ -13,6 +13,18 @@ initTheme();
 
 // Code-split the settings panel (incl. Leaflet) off the display's critical path.
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
+// The congregation's read-only page. Kept out of the display's critical path;
+// it shares no state with the app and can never reach the settings bundle.
+const PublicTimes = lazy(() => import('./pages/PublicTimes'));
+
+/**
+ * The public prayer-times page is a different product on a different device: a
+ * phone, held by someone who must not be able to edit anything. It must not
+ * start sync, audio, the prayer timers or the forced-orientation transform, so
+ * the decision is made from the URL before any of that mounts.
+ */
+const IS_PUBLIC_ROUTE =
+  typeof window !== 'undefined' && /^\/m(\/|$)/.test(window.location.pathname);
 
 /** Applies <html dir/lang> from the configured display language. */
 function useDocumentLocale() {
@@ -137,11 +149,28 @@ function AudioUnlockHint() {
 export default function App() {
   // Initialize the store once (loads config, starts the 1s tick + timers + sync).
   useEffect(() => {
+    // No sync, no audio, no timers on the congregation page.
+    if (IS_PUBLIC_ROUTE) return;
     void useAppStore.getState().init();
   }, []);
 
   useDocumentLocale();
   useAppUpdate(); // auto-reload when a new build is deployed
+
+  if (IS_PUBLIC_ROUTE) {
+    return (
+      <BrowserRouter>
+        <Suspense fallback={null}>
+          <Routes>
+            {/* Installed from the home screen, the PWA opens /m with no slug
+                and PublicTimes falls back to the last mosque viewed. */}
+            <Route path="/m" element={<PublicTimes />} />
+            <Route path="/m/:slug" element={<PublicTimes />} />
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
+    );
+  }
 
   return (
     <BrowserRouter>

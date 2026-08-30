@@ -17,6 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthSessionData {
   final String token;
+  final String refreshToken;
   final int expiresAt; // epoch ms
   final String userId;
   final String tenantId;
@@ -27,6 +28,7 @@ class AuthSessionData {
 
   const AuthSessionData({
     required this.token,
+    required this.refreshToken,
     required this.expiresAt,
     required this.userId,
     required this.tenantId,
@@ -38,6 +40,7 @@ class AuthSessionData {
 
   factory AuthSessionData.fromJson(Map<String, dynamic> j) => AuthSessionData(
         token: j['token'] as String,
+        refreshToken: j['refreshToken'] as String? ?? '',
         expiresAt: (j['expiresAt'] as num?)?.toInt() ?? 0,
         userId: j['userId'] as String? ?? '',
         tenantId: j['tenantId'] as String,
@@ -50,11 +53,14 @@ class AuthSessionData {
 
 class AuthSession {
   static const _kToken = 'auth_token';
+  static const _kRefreshToken = 'auth_refresh_token';
   static const _kExpiresAt = 'auth_token_expires_at';
   static const _kUserId = 'auth_user_id';
 
-  /// Refresh once the token is inside this window of expiring.
-  static const _refreshWindow = Duration(days: 30);
+  /// Supabase access tokens last about an hour, so this is a margin before
+  /// expiry rather than a renewal interval. The refresh token is what keeps a
+  /// display signed in across months of uptime.
+  static const _refreshWindow = Duration(minutes: 5);
 
   static late SharedPreferences _prefs;
   static late String _functionsUrl;
@@ -81,9 +87,14 @@ class AuthSession {
     return exp > 0 && DateTime.now().millisecondsSinceEpoch >= exp;
   }
 
+  static String? get refreshToken => _prefs.getString(_kRefreshToken);
+
   static Future<void> _save(AuthSessionData s) async {
     _cachedToken = s.token;
     await _prefs.setString(_kToken, s.token);
+    if (s.refreshToken.isNotEmpty) {
+      await _prefs.setString(_kRefreshToken, s.refreshToken);
+    }
     await _prefs.setInt(_kExpiresAt, s.expiresAt);
     await _prefs.setString(_kUserId, s.userId);
   }
@@ -91,6 +102,7 @@ class AuthSession {
   static Future<void> clear() async {
     _cachedToken = null;
     await _prefs.remove(_kToken);
+    await _prefs.remove(_kRefreshToken);
     await _prefs.remove(_kExpiresAt);
     await _prefs.remove(_kUserId);
   }
@@ -124,39 +136,40 @@ class AuthSession {
     return s;
   }
 
-  /// Renews the token when it is close to expiring. Returns false when the
-  /// session is gone for good and the user has to link again; callers treat
-  /// that as "stay linked but sync is dead" rather than wiping local config.
+  /// Renews the access token when it is close to expiring. Returns false only
+  /// when the session is genuinely gone and the user has to link again; a
+  /// network failure leaves the existing token in place so a display that is
+  /// merely offline does not sign itself out.
   static Future<bool> refreshIfNeeded() async {
     final current = _cachedToken;
-    if (current == null) return false;
+    final refresh = refreshToken;
+    if (current == null && refresh == null) return false;
 
     final exp = expiresAt;
-    if (exp > 0 &&
+    if (current != null &&
+        exp > 0 &&
         exp - DateTime.now().millisecondsSinceEpoch > _refreshWindow.inMilliseconds) {
       return true;
     }
 
+    if (refresh == null) return false;
+
     try {
-      await _save(await _call({'action': 'refresh'}, bearer: current));
+      await _save(await _call({'action': 'refresh', 'refreshToken': refresh}));
       return true;
     } catch (e) {
       dev.log('[Auth] refresh failed: $e');
-      // A network failure must not log a kiosk out; only a hard rejection does.
       return !isExpired;
     }
   }
 
-  static Future<AuthSessionData> _call(
-    Map<String, dynamic> body, {
-    String? bearer,
-  }) async {
+  static Future<AuthSessionData> _call(Map<String, dynamic> body) async {
     final res = await http.post(
       Uri.parse('$_functionsUrl/auth'),
       headers: {
         'Content-Type': 'application/json',
         'apikey': _anonKey,
-        'Authorization': 'Bearer ${bearer ?? _anonKey}',
+        'Authorization': 'Bearer $_anonKey',
       },
       body: jsonEncode(body),
     );

@@ -18,5 +18,13 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   // the result as the Authorization bearer, including for realtime socket
   // re-auth. Supplying it disables the built-in Supabase Auth client, which we
   // do not use.
-  accessToken: async () => AuthSession.getToken() ?? SUPABASE_ANON_KEY,
+  // Supabase access tokens last about an hour, so refresh here rather than
+  // relying on callers to do it first -- otherwise a display that has been
+  // idle sends an expired token and the request fails for no visible reason.
+  // refreshIfNeeded returns immediately when the token is still fresh, and
+  // uses plain fetch, so this cannot recurse back into the client.
+  accessToken: async () => {
+    if (AuthSession.getToken()) await AuthSession.refreshIfNeeded();
+    return AuthSession.getToken() ?? SUPABASE_ANON_KEY;
+  },
 });

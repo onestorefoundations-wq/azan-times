@@ -1,60 +1,60 @@
 /**
  * jwt.ts
- * Mints and verifies the tenant-scoped tokens the clients use in place of the
- * anon key. Signed HS256 with the project's JWT secret so PostgREST, Realtime
- * and Storage all accept them as ordinary `authenticated` sessions -- the
- * `tenant_id` claim is what the RLS policies in 02_security_hardening.sql read.
+ * Verifies the caller's Supabase Auth token and pulls the tenant out of it.
  *
- * Requires the APP_JWT_SECRET function secret to hold the project's JWT secret
- * (Dashboard -> Settings -> API -> JWT Settings -> JWT Secret).
+ * This used to mint HS256 tokens with the project's JWT secret. That secret is
+ * the "previously_used" key on this project -- ES256 is what signs now -- so
+ * anything built on it would have stopped working the day legacy JWT support
+ * was switched off, logging out every display at once. Supabase Auth issues
+ * the tokens instead, signed with whatever the current key is, and no secret
+ * needs to exist in the deployment at all.
+ *
+ * tenant_id lives in app_metadata, which a user's own session cannot modify --
+ * unlike user_metadata, which it can.
  */
-import { create, verify, getNumericDate, type Payload } from 'https://deno.land/x/djwt@v3.0.2/mod.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
-const secret = Deno.env.get('APP_JWT_SECRET');
-if (!secret) throw new Error('APP_JWT_SECRET is not set');
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-// Kiosk displays run unattended for months, so the token has to outlive any
-// plausible offline stretch; clients call action=refresh well before expiry.
-export const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 180; // 180 days
-
-const key = await crypto.subtle.importKey(
-  'raw',
-  new TextEncoder().encode(secret),
-  { name: 'HMAC', hash: 'SHA-256' },
-  false,
-  ['sign', 'verify'],
-);
-
-export interface TenantClaims extends Payload {
+export interface TenantClaims {
   sub: string;
   tenant_id: string;
-  role: 'authenticated';
-  aud: 'authenticated';
+  email: string | null;
+  username: string | null;
 }
 
-export async function mintToken(userId: string, tenantId: string): Promise<string> {
-  return await create(
-    { alg: 'HS256', typ: 'JWT' },
-    {
-      sub: userId,
-      tenant_id: tenantId,
-      role: 'authenticated',
-      aud: 'authenticated',
-      iat: getNumericDate(0),
-      exp: getNumericDate(TOKEN_TTL_SECONDS),
-    },
-    key,
-  );
-}
-
-/** Returns the claims, or null when the token is absent, malformed or expired. */
+/**
+ * Returns the caller's claims, or null when the token is absent, malformed,
+ * expired, or carries no tenant. Verification is delegated to Supabase, so
+ * this stays correct across key rotations.
+ */
 export async function verifyToken(bearer: string | null): Promise<TenantClaims | null> {
   if (!bearer) return null;
-  const raw = bearer.startsWith('Bearer ') ? bearer.slice(7) : bearer;
+  const token = bearer.startsWith('Bearer ') ? bearer.slice(7) : bearer;
+
+  // A short-lived client per call: getUser validates the token against the
+  // project's current signing keys rather than trusting anything we decode.
+  const client = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
   try {
-    const payload = (await verify(raw, key)) as TenantClaims;
-    if (!payload.tenant_id || !payload.sub) return null;
-    return payload;
+    const { data, error } = await client.auth.getUser(token);
+    if (error || !data?.user) return null;
+
+    const meta = (data.user.app_metadata ?? {}) as Record<string, unknown>;
+    const tenantId = typeof meta.tenant_id === 'string' ? meta.tenant_id : null;
+    // An authenticated user with no tenant must not be treated as belonging to
+    // some default one; refuse rather than guess.
+    if (!tenantId) return null;
+
+    return {
+      sub: data.user.id,
+      tenant_id: tenantId,
+      email: data.user.email ?? null,
+      username: typeof meta.username === 'string' ? meta.username : null,
+    };
   } catch {
     return null;
   }

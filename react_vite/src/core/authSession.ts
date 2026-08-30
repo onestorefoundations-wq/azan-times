@@ -11,14 +11,20 @@
 import { FUNCTIONS_URL, SUPABASE_ANON_KEY } from './supabaseConfig';
 
 const K_TOKEN = 'auth_token';
+const K_REFRESH = 'auth_refresh_token';
 const K_EXPIRES = 'auth_token_expires_at';
 const K_USER_ID = 'auth_user_id';
 
-/** Refresh once the token is inside this window of expiring. */
-const REFRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+/**
+ * Supabase access tokens last about an hour, so this is a small margin before
+ * expiry rather than the long window a self-minted token allowed. The refresh
+ * token is what actually persists the session across months of uptime.
+ */
+const REFRESH_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
 export interface AuthSession {
   token: string;
+  refreshToken: string;
   expiresAt: number;
   userId: string;
   tenantId: string;
@@ -46,9 +52,14 @@ export const AuthSession = {
     return exp > 0 && Date.now() >= exp;
   },
 
+  getRefreshToken(): string | null {
+    return localStorage.getItem(K_REFRESH);
+  },
+
   save(session: AuthSession): void {
     cachedToken = session.token;
     localStorage.setItem(K_TOKEN, session.token);
+    if (session.refreshToken) localStorage.setItem(K_REFRESH, session.refreshToken);
     localStorage.setItem(K_EXPIRES, String(session.expiresAt));
     localStorage.setItem(K_USER_ID, session.userId);
   },
@@ -56,6 +67,7 @@ export const AuthSession = {
   clear(): void {
     cachedToken = null;
     localStorage.removeItem(K_TOKEN);
+    localStorage.removeItem(K_REFRESH);
     localStorage.removeItem(K_EXPIRES);
     localStorage.removeItem(K_USER_ID);
   },
@@ -79,35 +91,40 @@ export const AuthSession = {
   },
 
   /**
-   * Renews the token when it is close to expiring. Returns false when the
-   * session is gone for good and the user has to log in again; callers treat
-   * that as "stay linked but sync is dead" rather than wiping local config.
+   * Renews the access token when it is close to expiring. Returns false only
+   * when the session is genuinely gone and the user has to sign in again; a
+   * network failure leaves the existing token in place so a display that is
+   * merely offline does not log itself out.
    */
   async refreshIfNeeded(): Promise<boolean> {
     const token = AuthSession.getToken();
-    if (!token) return false;
+    const refreshToken = AuthSession.getRefreshToken();
+    if (!token && !refreshToken) return false;
+
     const expiresAt = AuthSession.getExpiresAt();
-    if (expiresAt > 0 && expiresAt - Date.now() > REFRESH_WINDOW_MS) return true;
+    if (token && expiresAt > 0 && expiresAt - Date.now() > REFRESH_WINDOW_MS) return true;
+
+    // Nothing to renew with: the token is stale and cannot be replaced.
+    if (!refreshToken) return false;
 
     try {
-      const session = await callAuth({ action: 'refresh' }, token);
+      const session = await callAuth({ action: 'refresh', refreshToken });
       AuthSession.save(session);
       return true;
     } catch (e) {
       console.warn('[Auth] refresh failed', e);
-      // A network failure must not log a kiosk out; only a hard rejection does.
       return !AuthSession.isExpired();
     }
   },
 };
 
-async function callAuth(body: Record<string, unknown>, bearer?: string): Promise<AuthSession> {
+async function callAuth(body: Record<string, unknown>): Promise<AuthSession> {
   const res = await fetch(`${FUNCTIONS_URL}/auth`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${bearer ?? SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
     },
     body: JSON.stringify(body),
   });

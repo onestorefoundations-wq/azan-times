@@ -10,10 +10,14 @@
 import { FUNCTIONS_URL, SUPABASE_ANON_KEY } from './supabaseConfig';
 
 const K_TOKEN = 'auth_token';
+const K_REFRESH = 'auth_refresh_token';
 const K_EXPIRES = 'auth_token_expires_at';
 
-/** Refresh once the token is inside this window of expiring. */
-const REFRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Supabase access tokens last about an hour; the refresh token is what keeps
+ * the session alive. This is a margin before expiry, not a renewal interval.
+ */
+const REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
 export const AuthSession = {
   getToken: () => localStorage.getItem(K_TOKEN),
@@ -24,8 +28,11 @@ export const AuthSession = {
     return Boolean(token) && (expiresAt === 0 || Date.now() < expiresAt);
   },
 
+  getRefreshToken: () => localStorage.getItem(K_REFRESH),
+
   save(session) {
     localStorage.setItem(K_TOKEN, session.token);
+    if (session.refreshToken) localStorage.setItem(K_REFRESH, session.refreshToken);
     localStorage.setItem(K_EXPIRES, String(session.expiresAt));
     localStorage.setItem('tenant_id', session.tenantId);
     localStorage.setItem('username', session.username);
@@ -33,6 +40,7 @@ export const AuthSession = {
 
   clear() {
     localStorage.removeItem(K_TOKEN);
+    localStorage.removeItem(K_REFRESH);
     localStorage.removeItem(K_EXPIRES);
     localStorage.removeItem('tenant_id');
     localStorage.removeItem('username');
@@ -52,11 +60,15 @@ export const AuthSession = {
 
   async refreshIfNeeded() {
     const token = AuthSession.getToken();
-    if (!token) return false;
+    const refreshToken = AuthSession.getRefreshToken();
+    if (!token && !refreshToken) return false;
+
     const expiresAt = Number(localStorage.getItem(K_EXPIRES) ?? 0);
-    if (expiresAt > 0 && expiresAt - Date.now() > REFRESH_WINDOW_MS) return true;
+    if (token && expiresAt > 0 && expiresAt - Date.now() > REFRESH_WINDOW_MS) return true;
+    if (!refreshToken) return false;
+
     try {
-      AuthSession.save(await callAuth({ action: 'refresh' }, token));
+      AuthSession.save(await callAuth({ action: 'refresh', refreshToken }));
       return true;
     } catch (e) {
       console.warn('[Auth] refresh failed', e);
@@ -65,13 +77,13 @@ export const AuthSession = {
   },
 };
 
-async function callAuth(body, bearer) {
+async function callAuth(body) {
   const res = await fetch(`${FUNCTIONS_URL}/auth`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${bearer ?? SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
     },
     body: JSON.stringify(body),
   });

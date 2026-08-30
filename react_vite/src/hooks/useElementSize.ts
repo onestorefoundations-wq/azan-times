@@ -18,6 +18,21 @@ export function useElementSize<T extends HTMLElement>(): [RefObject<T>, Size] {
     if (!el) return;
     const update = () => setSize({ width: el.clientWidth, height: el.clientHeight });
     update();
+
+    // ResizeObserver is Chrome 64+. Android TV boxes ship System WebViews well
+    // older than their Android version, and an unguarded constructor throws
+    // during layout, unmounts the tree and leaves the screen blank. A window
+    // resize listener misses element-only changes, which on a fixed-size kiosk
+    // is a fair trade for rendering at all.
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', update);
+      window.addEventListener('orientationchange', update);
+      return () => {
+        window.removeEventListener('resize', update);
+        window.removeEventListener('orientationchange', update);
+      };
+    }
+
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();

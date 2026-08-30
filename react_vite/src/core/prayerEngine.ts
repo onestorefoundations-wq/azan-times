@@ -233,14 +233,46 @@ export function formatGregorianDate(date: Date, locale = 'en-GB'): string {
 }
 
 /** Hijri date via the built-in Islamic calendar, e.g. "23 Dhul Hijjah 1447". */
+/**
+ * Hijri month names, indexed 1-12.
+ *
+ * Asking Intl for month:'long' on the islamic calendar is not portable: several
+ * Android WebView builds ship an ICU without the Islamic month names and fall
+ * back to Gregorian ones plus a "BC" era, rendering 17 Rabi' al-Awwal 1448 as
+ * "18 March 1448 BC". Only the numeric fields are trustworthy, so we take those
+ * and supply the names ourselves.
+ */
+const HIJRI_MONTHS = [
+  '',
+  'Muharram',
+  'Safar',
+  "Rabi' al-Awwal",
+  "Rabi' al-Thani",
+  'Jumada al-Ula',
+  'Jumada al-Akhirah',
+  'Rajab',
+  "Sha'ban",
+  'Ramadan',
+  'Shawwal',
+  "Dhu al-Qi'dah",
+  'Dhu al-Hijjah',
+];
+
 export function getHijriDate(date: Date, locale = 'en-GB'): string {
   try {
     const parts = new Intl.DateTimeFormat(`${locale}-u-ca-islamic`, {
       day: 'numeric',
-      month: 'long',
+      month: 'numeric',
       year: 'numeric',
-    }).format(date);
-    return parts.replace(/\s*AH$/, '').trim();
+    }).formatToParts(date);
+
+    const find = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+    const day = find('day');
+    const month = Number(find('month'));
+    const year = find('year').replace(/\D/g, '');
+
+    if (!day || !year || !(month >= 1 && month <= 12)) return '';
+    return `${day} ${HIJRI_MONTHS[month]} ${year}`;
   } catch {
     return '';
   }

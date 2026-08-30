@@ -158,6 +158,24 @@ export const THEMES: Theme[] = [
     tickerBg:     '#0D1F3A',
   },
   {
+    // Pairs with the Focus template: a flat blue field behind the rotating
+    // panel, and a white pinned bar whose numerals pick up the accent.
+    id: 'skyline',
+    name: 'Sky Blue',
+    group: 'medium',
+    bg:           '#4CA1F5',
+    surface:      '#FFFFFF',
+    accent:       '#3D8FEF',
+    text:         '#FFFFFF',
+    primaryText:  '#FFFFFF',
+    secondaryText:'#3D8FEF',
+    prayerName:   '#EAF3FE',
+    prayerTime:   '#FFFFFF',
+    dateText:     '#D6E8FD',
+    tickerText:   '#FFFFFF',
+    tickerBg:     '#2F7FD8',
+  },
+  {
     id: 'forest',
     name: 'Forest Canopy',
     group: 'medium',
@@ -354,7 +372,7 @@ export const THEMES: Theme[] = [
 ];
 
 const STORAGE_KEY = 'masjid_theme';
-const DEFAULT_ID  = 'midnight';
+const DEFAULT_ID  = 'skyline';
 
 export function getTheme(): Theme {
   const saved = localStorage.getItem(STORAGE_KEY) ?? DEFAULT_ID;

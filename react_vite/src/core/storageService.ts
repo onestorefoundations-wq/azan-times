@@ -25,6 +25,8 @@ import {
   slideshowSettingsToJson,
   syncMetaToJson,
   tickerSettingsToJson,
+  defaultQuotesSettings,
+  quotesSettingsToJson,
   timeAdjustmentsToJson,
 } from './appConfig';
 
@@ -35,6 +37,7 @@ const K = {
   slideshowSettings: 'slideshow_settings',
   jumuahSettings: 'jumuah_settings',
   tickerSettings: 'ticker_settings',
+  quotesSettings: 'quotes_settings',
   syncMeta: 'sync_meta',
   pinHash: 'local_admin_pin_hash',
   deviceId: 'device_id',
@@ -81,6 +84,8 @@ export const StorageService = {
       saveSection(K.jumuahSettings, jumuahSettingsToJson(defaultJumuahSettings()));
     if (!localStorage.getItem(K.tickerSettings))
       saveSection(K.tickerSettings, tickerSettingsToJson(defaultTickerSettings()));
+    if (!localStorage.getItem(K.quotesSettings))
+      saveSection(K.quotesSettings, quotesSettingsToJson(defaultQuotesSettings()));
     if (!localStorage.getItem(K.syncMeta))
       saveSection(K.syncMeta, syncMetaToJson(defaultSyncMeta()));
     if (!localStorage.getItem(K.pinHash))
@@ -95,6 +100,7 @@ export const StorageService = {
       slideshow_settings: loadSection(K.slideshowSettings),
       jumuah_settings: loadSection(K.jumuahSettings),
       ticker_settings: loadSection(K.tickerSettings),
+      quotes_settings: loadSection(K.quotesSettings),
       sync_meta: loadSection(K.syncMeta),
     };
     const config = appConfigFromStorageMap(map);
@@ -114,6 +120,7 @@ export const StorageService = {
     saveSection(K.slideshowSettings, slideshowSettingsToJson(config.slideshow));
     saveSection(K.jumuahSettings, jumuahSettingsToJson(config.jumuah));
     saveSection(K.tickerSettings, tickerSettingsToJson(config.ticker));
+    saveSection(K.quotesSettings, quotesSettingsToJson(config.quotes));
     saveSection(K.syncMeta, syncMetaToJson(config.meta));
     localStorage.setItem(K.pinEnabled, String(config.meta.pinEnabled));
     if (config.meta.pinHash) localStorage.setItem(K.pinHash, config.meta.pinHash);

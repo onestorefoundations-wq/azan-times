@@ -5,6 +5,7 @@ import { isRtl } from './i18n';
 import { useIsPortrait } from './hooks/useOrientation';
 import { useAppUpdate } from './hooks/useAppUpdate';
 import { AudioService } from './core/audioService';
+import { isNative } from './core/nativeAlarms';
 import TvDisplay from './pages/TvDisplay';
 import { initTheme } from './theme';
 
@@ -92,10 +93,16 @@ function ForcedOrientation({ children }: { children: React.ReactNode }) {
   return <div style={style}>{children}</div>;
 }
 
-/** One-time "tap to enable sound" hint (browsers block autoplay until a gesture). */
+/**
+ * One-time "tap to enable sound" hint (browsers block autoplay until a gesture).
+ *
+ * The Android shell sets mediaPlaybackRequiresUserGesture=false, so there is
+ * nothing to unlock there -- and a kiosk on a wall would show the hint forever,
+ * because nobody is ever going to tap it.
+ */
 function AudioUnlockHint() {
   const enabled = useAppStore((s) => s.config.features.audioAlertsEnabled);
-  const [unlocked, setUnlocked] = useState(false);
+  const [unlocked, setUnlocked] = useState(isNative());
 
   useEffect(() => {
     if (!enabled || unlocked) return;

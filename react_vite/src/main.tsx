@@ -19,7 +19,10 @@ async function bootstrap() {
 
   // Registered here rather than injected into every HTML entry, so the
   // display's service worker never lands on the congregation page.
-  registerSW({ immediate: true });
+  // Skipped in the native (Capacitor) build: the APK already ships every asset,
+  // and a worker caching them would serve the previous build's JS after an app
+  // update until its own cache expired.
+  if (!import.meta.env.VITE_NATIVE) registerSW({ immediate: true });
 }
 
 void bootstrap();

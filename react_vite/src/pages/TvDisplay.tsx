@@ -12,7 +12,7 @@ import {
   slidesForOrientation,
   useAppStore,
 } from '../store/appStore';
-import type { DisplayOrientation } from '../core/appConfig';
+import type { DisplayOrientation, DisplayTemplate } from '../core/appConfig';
 import { clamp, useElementSize } from '../hooks/useElementSize';
 import { useIsPortrait } from '../hooks/useOrientation';
 import { getStrings } from '../i18n';
@@ -22,6 +22,7 @@ import AdhanOverlay from '../components/AdhanOverlay';
 import SlideshowPanel from '../components/SlideshowPanel';
 import MiniClockOverlay from '../components/MiniClockOverlay';
 import Ticker from '../components/Ticker';
+import FocusTemplate from '../components/FocusTemplate';
 
 export default function TvDisplay() {
   const navigate = useNavigate();
@@ -79,6 +80,8 @@ export default function TvDisplay() {
       ? devicePortrait
       : forced === 'portrait' || forced === 'portrait-flip';
 
+  const isFocus = config.meta.displayTemplate === 'focus';
+
   const features = config.features;
   const slideshow = config.slideshow;
   const alertMode = features.adhanAlertMode;
@@ -124,6 +127,7 @@ export default function TvDisplay() {
           />
         ) : (
           <MainLayout
+            template={config.meta.displayTemplate}
             isPortrait={isPortrait}
             isSlideshowActive={isSlideshowActive}
             displayMode={slideshow.displayMode}
@@ -148,8 +152,15 @@ export default function TvDisplay() {
           AudioService.unlock();
           openSettings();
         }}
-        className="absolute bottom-4 right-4 flex h-10 w-10 items-center justify-center rounded-full opacity-40 hover:opacity-100"
-        style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--accent)' }}
+        className="absolute right-4 flex h-10 w-10 items-center justify-center rounded-full opacity-40 hover:opacity-100"
+        style={{
+          // Focus pins a summary bar along the bottom edge; a FAB there would
+          // sit on top of the prayer times.
+          [isFocus ? 'top' : 'bottom']: 16,
+          background: 'var(--surface)',
+          color: 'var(--text)',
+          border: '1px solid var(--accent)',
+        }}
         aria-label="Settings"
       >
         ⚙
@@ -157,7 +168,7 @@ export default function TvDisplay() {
 
       {/* Orientation toggle FAB — hidden when admin disables it */}
       {config.meta.showOrientationFab && (
-        <OrientationFab current={config.meta.displayOrientation} />
+        <OrientationFab current={config.meta.displayOrientation} pinTop={isFocus} />
       )}
     </div>
   );
@@ -166,6 +177,7 @@ export default function TvDisplay() {
 // ── Main (non-alert) layout ────────────────────────────────────
 
 interface LayoutProps {
+  template: DisplayTemplate;
   isPortrait: boolean;
   isSlideshowActive: boolean;
   displayMode: string;
@@ -184,6 +196,7 @@ interface LayoutProps {
 function MainLayout(props: LayoutProps) {
   const [ref, { width, height }] = useElementSize<HTMLDivElement>();
   const {
+    template,
     isPortrait,
     isSlideshowActive,
     displayMode,
@@ -218,7 +231,19 @@ function MainLayout(props: LayoutProps) {
 
   let body: JSX.Element;
 
-  if (isSlideshowActive && displayMode === 'full_screen') {
+  if (template === 'focus') {
+    body = (
+      <FocusTemplate
+        isPortrait={isPortrait}
+        config={config}
+        prayers={prayers}
+        nextPrayer={nextPrayer}
+        activePrayer={activePrayer}
+        slides={slides}
+        isSlideshowActive={isSlideshowActive}
+      />
+    );
+  } else if (isSlideshowActive && displayMode === 'full_screen') {
     body = (
       <div className="relative h-full w-full">
         {slideshowPanel}
@@ -329,7 +354,7 @@ const ORIENTATION_LABELS: Record<DisplayOrientation, string> = {
   'portrait-flip': 'Portrait (flipped)',
 };
 
-function OrientationFab({ current }: { current: DisplayOrientation }) {
+function OrientationFab({ current, pinTop }: { current: DisplayOrientation; pinTop: boolean }) {
   const config = useAppStore((s) => s.config);
   const saveConfig = useAppStore((s) => s.saveConfig);
   const [tooltip, setTooltip] = useState(false);
@@ -356,8 +381,7 @@ function OrientationFab({ current }: { current: DisplayOrientation }) {
       onMouseLeave={() => setTooltip(false)}
       style={{
         position: 'absolute',
-        bottom: 56,
-        right: 16,
+        ...(pinTop ? { top: 16, right: 64 } : { bottom: 56, right: 16 }),
         width: 40,
         height: 40,
         borderRadius: '50%',

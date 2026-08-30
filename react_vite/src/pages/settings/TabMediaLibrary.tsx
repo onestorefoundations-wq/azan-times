@@ -11,6 +11,18 @@ import { MediaLibraryService } from '../../core/mediaLibraryService';
 import { allMediaFiles, useAppStore } from '../../store/appStore';
 import { isLinked } from '../../core/appConfig';
 import { SettingsTabScaffold, useTheme } from './helpers';
+import ImageCropDialog from '../../components/ImageCropDialog';
+
+/**
+ * Frame each category is shown in, so the crop dialog outlines the real target
+ * rather than a generic square.
+ */
+const ASPECT_FOR_CATEGORY: Record<string, number> = {
+  background_landscape: 16 / 9,
+  slide_landscape: 16 / 9,
+  background_portrait: 9 / 16,
+  slide_portrait: 9 / 16,
+};
 
 const CATEGORIES: { key: string; label: string }[] = [
   { key: 'background_landscape', label: 'BG Landscape' },
@@ -41,15 +53,52 @@ export default function TabMediaLibrary() {
   const uploadInput = useRef<HTMLInputElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
 
+  // Files wait here while the admin fits each one to the frame. 'destination'
+  // decides where the finished images go once the queue empties.
+  const [cropQueue, setCropQueue] = useState<File[]>([]);
+  const [cropIndex, setCropIndex] = useState(0);
+  const [cropped, setCropped] = useState<File[]>([]);
+  const [cropDestination, setCropDestination] = useState<'cloud' | 'local'>('local');
+
+  const beginCrop = (files: FileList | null, destination: 'cloud' | 'local') => {
+    if (!files || files.length === 0) return;
+    setCropDestination(destination);
+    setCropQueue(Array.from(files));
+    setCropIndex(0);
+    setCropped([]);
+  };
+
+  /** Called once per image, with either the cropped file or the original. */
+  const advanceCrop = async (result: File) => {
+    const done = [...cropped, result];
+    if (cropIndex + 1 < cropQueue.length) {
+      setCropped(done);
+      setCropIndex(cropIndex + 1);
+      return;
+    }
+    // Queue finished -- hand everything to the existing upload/import path.
+    setCropQueue([]);
+    setCropped([]);
+    setCropIndex(0);
+    if (cropDestination === 'cloud') await handleUpload(done);
+    else await importLocalFiles(cat, done);
+  };
+
+  const cancelCrop = () => {
+    setCropQueue([]);
+    setCropped([]);
+    setCropIndex(0);
+  };
+
   const filesInCat = all.filter((f) => f.category === cat);
   const isBg = cat.startsWith('background');
 
-  const handleUpload = async (files: FileList | null) => {
+  const handleUpload = async (files: File[] | null) => {
     if (!files || !tenantId) return;
     setBusy(true);
     setError(null);
     try {
-      for (const file of Array.from(files)) {
+      for (const file of files) {
         await MediaLibraryService.uploadFile({ tenantId, blob: file, filename: file.name, category: cat, deviceId: config.meta.deviceId });
       }
       await refreshMediaLibrary();
@@ -161,7 +210,18 @@ export default function TabMediaLibrary() {
       <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {linked && (
           <>
-            <input ref={uploadInput} type="file" accept="image/*" multiple hidden onChange={(e) => handleUpload(e.target.files)} />
+            <input
+              ref={uploadInput}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                beginCrop(e.target.files, 'cloud');
+                // Cleared so picking the same file twice still fires onChange.
+                e.target.value = '';
+              }}
+            />
             <button
               onClick={() => uploadInput.current?.click()}
               disabled={busy}
@@ -171,7 +231,17 @@ export default function TabMediaLibrary() {
             </button>
           </>
         )}
-        <input ref={importInput} type="file" accept="image/*" multiple hidden onChange={(e) => e.target.files && importLocalFiles(cat, e.target.files)} />
+        <input
+          ref={importInput}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            beginCrop(e.target.files, 'local');
+            e.target.value = '';
+          }}
+        />
         <button
           onClick={() => importInput.current?.click()}
           style={{ padding: 14, borderRadius: 8, background: 'rgba(251,146,60,0.1)', border: '1px solid rgba(251,146,60,0.45)', color: '#FB923C', fontWeight: 600 }}
@@ -179,6 +249,21 @@ export default function TabMediaLibrary() {
           📱 Import from Device (works offline)
         </button>
       </div>
+
+      {cropQueue[cropIndex] && (
+        <ImageCropDialog
+          // Keyed by position so the dialog fully resets between images rather
+          // than carrying the previous one's zoom and rotation over.
+          key={cropIndex}
+          file={cropQueue[cropIndex]}
+          aspect={ASPECT_FOR_CATEGORY[cat] ?? 16 / 9}
+          index={cropIndex}
+          total={cropQueue.length}
+          onApply={advanceCrop}
+          onSkip={() => advanceCrop(cropQueue[cropIndex])}
+          onCancel={cancelCrop}
+        />
+      )}
     </SettingsTabScaffold>
   );
 }

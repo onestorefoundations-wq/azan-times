@@ -38,6 +38,7 @@ import {
 } from '../core/mediaFile';
 import { StorageService } from '../core/storageService';
 import { AudioService } from '../core/audioService';
+import { syncNativeAlarms } from '../core/nativeAlarms';
 import { SupabaseSync, SyncStatus } from '../core/supabaseSync';
 import { MediaLibraryService } from '../core/mediaLibraryService';
 import { MediaCache } from '../core/mediaCache';
@@ -300,13 +301,21 @@ export const useAppStore = create<AppState>((set, get) => {
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     midnightTimer = setTimeout(() => {
       recalc();
+      // The alarm horizon is two days, so it has to be refilled once a day or
+      // it drains and the backstop silently stops covering.
+      void syncNativeAlarms(get().config, get().config.features.audioAlertsEnabled);
       scheduleMidnight();
     }, midnight.getTime() - now.getTime());
   };
 
   const applyConfigSideEffects = (): void => {
     recalc();
-    AudioService.setEnabled(get().config.features.audioAlertsEnabled);
+    const { features } = get().config;
+    AudioService.setEnabled(features.audioAlertsEnabled);
+    // Hand the same alert times to the OS. On native the WebView's tick stops
+    // when the app is backgrounded; the alarm keeps the adhan on time. No-op in
+    // a browser.
+    void syncNativeAlarms(get().config, features.audioAlertsEnabled);
     restartSlideshowCycle();
   };
 

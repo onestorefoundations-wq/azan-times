@@ -1,0 +1,16 @@
+{
+  "appId": "com.pro26.masjid_display",
+  "appName": "Masjid Display",
+  "webDir": "../react_vite/dist",
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": true
+  },
+  "server": {
+    "androidScheme": "https",
+    "hostname": "localhost",
+    "cleartext": true
+  },
+  "plugins": {}
+}

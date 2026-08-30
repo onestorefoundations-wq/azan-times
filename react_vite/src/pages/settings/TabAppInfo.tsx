@@ -106,9 +106,14 @@ export default function TabAppInfo() {
       setInstallState('installed');
       return;
     }
-    mq.addEventListener('change', (e) => {
+    // MediaQueryList only gained addEventListener in Chrome 39/Safari 14; the
+    // old addListener is all some TV WebViews have, and calling the missing one
+    // throws out of this effect.
+    const onChange = (e: MediaQueryListEvent) => {
       if (e.matches) setInstallState('installed');
-    });
+    };
+    if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
+    else if (typeof mq.addListener === 'function') mq.addListener(onChange);
 
     const onPrompt = (e: Event) => {
       e.preventDefault();

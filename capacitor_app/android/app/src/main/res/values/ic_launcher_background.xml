@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the display's slate ground; the default white made the logo
+         float on a bright tile next to a dark app. -->
+    <color name="ic_launcher_background">#0F172A</color>
+</resources>

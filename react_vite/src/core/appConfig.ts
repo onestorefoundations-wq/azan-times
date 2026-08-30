@@ -40,8 +40,13 @@ export const defaultMasjidProfile = (): MasjidProfile => ({
   name: 'Local Mosque',
   nameArabic: null,
   tenantId: null,
-  latitude: 11.100030590411507,
-  longitude: 76.22848915791933,
+  // Malappuram, Kerala. 'Karachi' is the 18/18 degree convention, and
+  // 'Standard' is the Shafi'i asr (one shadow length) followed in Kerala --
+  // together these give the local Salafi timetable. Any masjid can override
+  // all three in Settings > Location & Calc, and fine-tune per prayer in
+  // Settings > Prayer Offsets.
+  latitude: 11.051,
+  longitude: 76.0711,
   timezoneId: 'Asia/Kolkata',
   calculationMethod: 'Karachi',
   asrJuristicMethod: 'Standard',
@@ -51,8 +56,8 @@ export const masjidProfileFromJson = (j: Json): MasjidProfile => ({
   name: str(j.name, 'Local Mosque'),
   nameArabic: strOrNull(j.name_arabic),
   tenantId: strOrNull(j.tenant_id),
-  latitude: num(j.latitude, 11.100030590411507),
-  longitude: num(j.longitude, 76.22848915791933),
+  latitude: num(j.latitude, 11.051),
+  longitude: num(j.longitude, 76.0711),
   timezoneId: str(j.timezone_id, 'Asia/Kolkata'),
   calculationMethod: str(j.calculation_method, 'Karachi'),
   asrJuristicMethod: str(j.asr_juristic_method, 'Standard'),
@@ -191,7 +196,11 @@ export interface TickerSettings {
 }
 
 export const defaultTickerSettings = (): TickerSettings => ({
-  enabled: true,
+  // Off for new installs. The Focus template pins its own summary bar to the
+  // bottom edge, and a scrolling banner under it is one moving thing too many.
+  // tickerSettingsFromJson still defaults to true, so a display that already
+  // has a ticker keeps it.
+  enabled: false,
   messages: ['Welcome to our Masjid!'],
   speed: 50,
 });
@@ -206,6 +215,61 @@ export const tickerSettingsToJson = (t: TickerSettings): Json => ({
   enabled: t.enabled,
   messages: t.messages,
   speed: t.speed,
+});
+
+// ═══════════════════════════════════════════════════════════════
+// QuotesSettings
+// ═══════════════════════════════════════════════════════════════
+//
+// Hadith / ayah cards shown by the Focus template's rotating panel. Kept
+// separate from the ticker: a ticker line is a short announcement that scrolls
+// past, a quote is a paragraph the congregation reads while waiting, and the
+// two are edited by different people at different times.
+
+export interface QuoteEntry {
+  id: string;
+  text: string;
+  /** Attribution line, e.g. "Daraqutni, Hasan". Blank hides the line entirely. */
+  source: string;
+}
+
+export interface QuotesSettings {
+  enabled: boolean;
+  /** How long one quote stays on screen before the panel rotates. */
+  rotationSeconds: number;
+  entries: QuoteEntry[];
+}
+
+export const defaultQuotesSettings = (): QuotesSettings => ({
+  enabled: true,
+  rotationSeconds: 20,
+  entries: [],
+});
+
+const quoteEntryFromJson = (j: Json): QuoteEntry => ({
+  id: str(j.id, ''),
+  text: str(j.text, ''),
+  source: str(j.source, ''),
+});
+
+const quoteEntryToJson = (q: QuoteEntry): Json => ({
+  id: q.id,
+  text: q.text,
+  source: q.source,
+});
+
+export const quotesSettingsFromJson = (j: Json): QuotesSettings => ({
+  enabled: bool(j.enabled, true),
+  rotationSeconds: int(j.rotation_seconds, 20),
+  entries: Array.isArray(j.entries)
+    ? (j.entries as Json[]).map(quoteEntryFromJson).filter((q) => q.text.trim() !== '')
+    : [],
+});
+
+export const quotesSettingsToJson = (q: QuotesSettings): Json => ({
+  enabled: q.enabled,
+  rotation_seconds: q.rotationSeconds,
+  entries: q.entries.map(quoteEntryToJson),
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -253,8 +317,20 @@ export interface SlideshowSettings {
   portraitImages: SlideAsset[];
 }
 
+/**
+ * Bundled with the app rather than fetched, so it shows on a display that has
+ * never been online. Lives in public/slides and is copied into the APK by the
+ * Capacitor sync.
+ */
+export const DEFAULT_SLIDE: SlideAsset = {
+  id: 'builtin_peace_radio_banner',
+  filename: 'peace-radio-banner.jpg',
+  localPath: '/slides/peace-radio-banner.jpg',
+  uploadedAt: 0,
+};
+
 export const defaultSlideshowSettings = (): SlideshowSettings => ({
-  enabled: false,
+  enabled: true,
   tvScreenDurationMins: 5,
   tvScreenExtraSecs: 0,
   slideshowRunDurationMins: 3,
@@ -265,7 +341,9 @@ export const defaultSlideshowSettings = (): SlideshowSettings => ({
   displayMode: 'full_screen',
   overlayCorner: 'top_right',
   overlaySizePercent: 25,
-  images: [],
+  // Only the shared list: imagesForOrientation falls back to it for both
+  // orientations, so one entry covers landscape and portrait.
+  images: [DEFAULT_SLIDE],
   landscapeImages: [],
   portraitImages: [],
 });
@@ -361,6 +439,15 @@ export type DisplayOrientation =
   | 'portrait'
   | 'portrait-flip';
 
+/**
+ * Which display layout to render.
+ *
+ * 'classic' -- the original clock panel beside a full prayer table.
+ * 'focus'   -- a pinned summary bar with a rotating panel above it: next
+ *              prayer, quotes, then slideshow images.
+ */
+export type DisplayTemplate = 'classic' | 'focus';
+
 export interface SyncMeta {
   deviceId: string | null;
   supabaseConfigVersion: number;
@@ -370,6 +457,7 @@ export interface SyncMeta {
   linkedEmail: string | null;
   linkedMosqueName: string | null;
   displayOrientation: DisplayOrientation;
+  displayTemplate: DisplayTemplate;
   customBackgroundPath: string | null;
   displayFontFamily: string | null;
   primaryTextColor: string | null;
@@ -395,6 +483,9 @@ export const defaultSyncMeta = (): SyncMeta => ({
   linkedEmail: null,
   linkedMosqueName: null,
   displayOrientation: 'auto',
+  // New installs get the Focus template. Existing ones keep Classic -- see the
+  // deliberate default mismatch in syncMetaFromJson below.
+  displayTemplate: 'focus',
   customBackgroundPath: null,
   displayFontFamily: null,
   primaryTextColor: null,
@@ -420,6 +511,10 @@ export const syncMetaFromJson = (j: Json): SyncMeta => ({
   linkedEmail: strOrNull(j.linked_email),
   linkedMosqueName: strOrNull(j.linked_mosque_name),
   displayOrientation: str(j.display_orientation, 'auto'),
+  // Defaults to 'classic', unlike defaultSyncMeta(). Stored JSON without the
+  // key means a screen configured before templates existed, and silently
+  // relaying out a mosque's working display is not an upgrade.
+  displayTemplate: str(j.display_template, 'classic') as DisplayTemplate,
   customBackgroundPath: strOrNull(j.custom_background_path),
   displayFontFamily: strOrNull(j.display_font_family),
   primaryTextColor: strOrNull(j.primary_text_color),
@@ -445,6 +540,7 @@ export const syncMetaToJson = (m: SyncMeta): Json => ({
   linked_email: m.linkedEmail,
   linked_mosque_name: m.linkedMosqueName,
   display_orientation: m.displayOrientation,
+  display_template: m.displayTemplate,
   custom_background_path: m.customBackgroundPath,
   display_font_family: m.displayFontFamily,
   primary_text_color: m.primaryTextColor,
@@ -496,6 +592,7 @@ export interface AppConfig {
   slideshow: SlideshowSettings;
   jumuah: JumuahSettings;
   ticker: TickerSettings;
+  quotes: QuotesSettings;
   meta: SyncMeta;
 }
 
@@ -506,6 +603,7 @@ export const defaultAppConfig = (): AppConfig => ({
   slideshow: defaultSlideshowSettings(),
   jumuah: defaultJumuahSettings(),
   ticker: defaultTickerSettings(),
+  quotes: defaultQuotesSettings(),
   meta: defaultSyncMeta(),
 });
 
@@ -524,6 +622,7 @@ export const appConfigFromStorageMap = (map: Json): AppConfig => ({
     : defaultSlideshowSettings(),
   jumuah: map.jumuah_settings ? jumuahSettingsFromJson(map.jumuah_settings) : defaultJumuahSettings(),
   ticker: map.ticker_settings ? tickerSettingsFromJson(map.ticker_settings) : defaultTickerSettings(),
+  quotes: map.quotes_settings ? quotesSettingsFromJson(map.quotes_settings) : defaultQuotesSettings(),
   meta: map.sync_meta ? syncMetaFromJson(map.sync_meta) : defaultSyncMeta(),
 });
 
@@ -540,6 +639,7 @@ export const CONFIG_SECTIONS = [
   'slideshow_settings',
   'jumuah_settings',
   'ticker_settings',
+  'quotes_settings',
   'display_settings',
 ] as const;
 
@@ -571,10 +671,14 @@ export const appConfigToCloudSections = (c: AppConfig): Record<ConfigSection, Js
   slideshow_settings: slideshowSettingsToJson(c.slideshow),
   jumuah_settings: jumuahSettingsToJson(c.jumuah),
   ticker_settings: tickerSettingsToJson(c.ticker),
+  quotes_settings: quotesSettingsToJson(c.quotes),
   // Mosque-wide presentation only. Orientation, PIN, admin theme and the local
   // background path are deliberately absent -- see DEVICE_LOCAL_META_KEYS.
   display_settings: {
     display_font_family: c.meta.displayFontFamily,
+    // Mosque-wide: every screen in one masjid should look alike. Orientation
+    // stays device-local because screens are physically mounted differently.
+    display_template: c.meta.displayTemplate,
     primary_text_color: c.meta.primaryTextColor,
     secondary_text_color: c.meta.secondaryTextColor,
     prayer_name_color: c.meta.prayerNameColor,
@@ -622,6 +726,7 @@ export const applyCloudSections = (
   if (sections.slideshow_settings) next.slideshow = slideshowSettingsFromJson(sections.slideshow_settings);
   if (sections.jumuah_settings) next.jumuah = jumuahSettingsFromJson(sections.jumuah_settings);
   if (sections.ticker_settings) next.ticker = tickerSettingsFromJson(sections.ticker_settings);
+  if (sections.quotes_settings) next.quotes = quotesSettingsFromJson(sections.quotes_settings);
 
   if (sections.display_settings) {
     const ds = sections.display_settings;
@@ -634,6 +739,7 @@ export const applyCloudSections = (
       prayerTimeColor: strOrNull(ds.prayer_time_color),
       dateTextColor: strOrNull(ds.date_text_color),
       tickerTextColor: strOrNull(ds.ticker_text_color),
+      displayTemplate: str(ds.display_template, next.meta.displayTemplate) as DisplayTemplate,
       backgroundImages: Array.isArray(ds.background_images) ? (ds.background_images as string[]) : [],
       activeBackgroundMediaId: strOrNull(ds.active_background_media_id),
     };
@@ -661,6 +767,7 @@ export const appConfigFromCloudJson = (j: Json, localMeta?: SyncMeta): AppConfig
     prayerTimeColor: strOrNull(ds.prayer_time_color),
     dateTextColor: strOrNull(ds.date_text_color),
     tickerTextColor: strOrNull(ds.ticker_text_color),
+    displayTemplate: str(ds.display_template, base.displayTemplate) as DisplayTemplate,
     backgroundImages: Array.isArray(ds.background_images) ? (ds.background_images as string[]) : [],
     activeBackgroundMediaId: strOrNull(ds.active_background_media_id),
   };
@@ -676,6 +783,7 @@ export const appConfigFromCloudJson = (j: Json, localMeta?: SyncMeta): AppConfig
       : defaultSlideshowSettings(),
     jumuah: j.jumuah_settings ? jumuahSettingsFromJson(j.jumuah_settings) : defaultJumuahSettings(),
     ticker: j.ticker_settings ? tickerSettingsFromJson(j.ticker_settings) : defaultTickerSettings(),
+    quotes: j.quotes_settings ? quotesSettingsFromJson(j.quotes_settings) : defaultQuotesSettings(),
     meta: mergedMeta,
   };
 };

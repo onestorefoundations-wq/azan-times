@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import legacy from '@vitejs/plugin-legacy';
 import path from 'node:path';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -19,6 +20,12 @@ export default defineConfig({
     },
   },
   build: {
+    // Vite's default target is ES2020 (Chrome 87+). Cheap Android TV boxes ship
+    // an AOSP System WebView years older than the Android version on the box --
+    // the Hi3521 panels report Android 11 with a 4.9 kernel and a WebView that
+    // cannot parse optional chaining. A bundle it cannot parse renders nothing
+    // at all, which is why the screen came up blank rather than erroring.
+    target: 'es2015',
     rollupOptions: {
       input: {
         // The TV display.
@@ -42,6 +49,17 @@ export default defineConfig({
       },
     },
     react(),
+    // Emits a second, ES5 + polyfilled copy of the bundle behind `nomodule`.
+    // A modern WebView ignores it and loads the small modern build; an old one
+    // ignores the module build and loads this. The APK carries both, so one
+    // build serves the phone and the TV.
+    legacy({
+      targets: ['chrome >= 61', 'android >= 5'],
+      // Old WebViews are missing APIs as well as syntax: Intl, Object.entries,
+      // Promise.finally and friends are all reachable from this app.
+      modernPolyfills: true,
+      renderLegacyChunks: true,
+    }),
     VitePWA({
       registerType: 'autoUpdate',
       // Registered by hand in main.tsx. Left on 'auto' the plugin injects the

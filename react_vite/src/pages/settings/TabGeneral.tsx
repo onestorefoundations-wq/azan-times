@@ -1,17 +1,23 @@
-import { MasjidProfile } from '../../core/appConfig';
+import { DisplayTemplate, MasjidProfile } from '../../core/appConfig';
 import { SettingsFormField, SettingsTabScaffold, TextInput, useTheme } from './helpers';
 import ThemeSelector from './ThemeSelector';
+import TemplateSelector from './TemplateSelector';
 
 export default function TabGeneral({
   profile,
+  template,
   onChange,
+  onTemplateChange,
 }: {
   profile: MasjidProfile;
+  template: DisplayTemplate;
   onChange: (p: MasjidProfile) => void;
+  onTemplateChange: (t: DisplayTemplate) => void;
 }) {
   const t = useTheme();
   return (
     <SettingsTabScaffold title="General Settings">
+      <TemplateSelector value={template} onChange={onTemplateChange} />
       <ThemeSelector />
       <div style={{ height: 1, background: t.borderSubtle, margin: '4px 0 20px' }} />
       <SettingsFormField

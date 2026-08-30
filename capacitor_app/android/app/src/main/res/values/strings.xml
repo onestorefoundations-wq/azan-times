@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Masjid Display</string>
+    <string name="title_activity_main">Masjid Display</string>
+    <string name="package_name">com.pro26.masjid_display</string>
+    <string name="custom_url_scheme">com.pro26.masjid_display</string>
+</resources>

@@ -17,6 +17,7 @@ import TabLocation from './TabLocation';
 import TabPrayerOffsets from './TabPrayerOffsets';
 import TabSlideshowJumuah from './TabSlideshowJumuah';
 import TabTicker from './TabTicker';
+import TabQuotes from './TabQuotes';
 import TabSystemPrefs from './TabSystemPrefs';
 import TabMediaLibrary from './TabMediaLibrary';
 import TabCloudAccount from './TabCloudAccount';
@@ -24,7 +25,7 @@ import TabAppInfo from './TabAppInfo';
 
 type TabKey =
   | 'general' | 'location' | 'prayers' | 'slideshow_jumuah'
-  | 'ticker' | 'system' | 'media' | 'account' | 'app';
+  | 'ticker' | 'quotes' | 'system' | 'media' | 'account' | 'app';
 
 const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'general', label: 'General Info', icon: '🕌' },
@@ -32,6 +33,7 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'prayers', label: 'Prayer Offsets', icon: '🕑' },
   { key: 'slideshow_jumuah', label: "Slideshow & Jumu'ah", icon: '🖼️' },
   { key: 'ticker', label: 'Scrolling Ticker', icon: '🔤' },
+  { key: 'quotes', label: 'Quotes & Hadith', icon: '📖' },
   { key: 'system', label: 'System Preferences', icon: '⚙️' },
   { key: 'media', label: 'Media Library', icon: '🖼️' },
   { key: 'account', label: 'Cloud & Sync', icon: '☁️' },
@@ -136,7 +138,14 @@ export default function SettingsPage() {
           {/* Content */}
           <div className="min-h-0 flex-1">
             {activeTab === 'general' && (
-              <TabGeneral profile={draft.profile} onChange={(profile) => setDraft({ ...draft, profile })} />
+              <TabGeneral
+                profile={draft.profile}
+                template={draft.meta.displayTemplate}
+                onChange={(profile) => setDraft({ ...draft, profile })}
+                onTemplateChange={(displayTemplate) =>
+                  setDraft({ ...draft, meta: { ...draft.meta, displayTemplate } })
+                }
+              />
             )}
             {activeTab === 'location' && (
               <TabLocation profile={draft.profile} onChange={(profile) => setDraft({ ...draft, profile })} />
@@ -154,6 +163,9 @@ export default function SettingsPage() {
             )}
             {activeTab === 'ticker' && (
               <TabTicker ticker={draft.ticker} onChange={(ticker) => setDraft({ ...draft, ticker })} />
+            )}
+            {activeTab === 'quotes' && (
+              <TabQuotes quotes={draft.quotes} onChange={(quotes) => setDraft({ ...draft, quotes })} />
             )}
             {activeTab === 'system' && (
               <TabSystemPrefs

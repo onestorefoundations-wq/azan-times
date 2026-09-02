@@ -19,3 +19,29 @@ export const SUPABASE_ANON_KEY =
 export const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
 
 export const APP_VERSION = '1.1.0-react';
+
+/**
+ * Where the congregation's page is publicly reachable. Needed because the app
+ * cannot always derive it from itself: inside the Android WebView the origin is
+ * `https://localhost` (androidScheme: https), so a link built from
+ * window.location.origin came out as https://localhost/m/<slug> -- a QR code
+ * and a "Copy link" that resolve to the phone showing them and to nobody else.
+ */
+export const PUBLIC_SITE_URL =
+  import.meta.env.VITE_PUBLIC_SITE_URL ?? 'https://azan-times.vercel.app';
+
+/**
+ * The public URL for a mosque's read-only page.
+ *
+ * A real web deployment links to itself, so a preview build or a self-hosted
+ * copy shares its own address rather than this repo's. Anything that is not a
+ * public web origin -- the APK, `vite dev`, a file:// load -- falls back to the
+ * canonical host, since a link to localhost is worse than useless when the
+ * whole point is to hand it to someone else.
+ */
+export function publicPageUrl(slug: string): string {
+  const origin = typeof window === 'undefined' ? '' : window.location.origin;
+  const isShareable =
+    /^https?:\/\//i.test(origin) && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/i.test(origin);
+  return `${isShareable ? origin : PUBLIC_SITE_URL}/m/${slug}`;
+}

@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { supabase } from '../core/supabaseClient';
+import { publicPageUrl } from '../core/supabaseConfig';
 
 interface Props {
   tenantId: string;
@@ -25,7 +26,7 @@ export default function PublicPagePanel({ tenantId, theme }: Props) {
   const [copied, setCopied] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const url = slug ? `${window.location.origin}/m/${slug}` : null;
+  const url = slug ? publicPageUrl(slug) : null;
 
   useEffect(() => {
     let cancelled = false;

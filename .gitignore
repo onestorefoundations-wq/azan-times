@@ -46,3 +46,12 @@ flutter_app/**/*.log
 # Temporary files
 *.tmp
 *.log
+
+# Build artefact: churns on every tsc run and is regenerated from source.
+react_vite/tsconfig.tsbuildinfo
+
+# Release signing credentials — must never reach the remote.
+flutter_app/APK_STORE*RELEASE_KEY*.txt
+
+# Stray API error responses saved during debugging.
+spec.json

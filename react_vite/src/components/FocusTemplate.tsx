@@ -276,8 +276,17 @@ function PrayerListPane({
 
   const nameFont = clamp(Math.min(rowH * 0.42, fits(colW(3), 8, 0.72)), 12, 46);
   const timeFont = clamp(Math.min(rowH * 0.5, fits(colW(2), 5, 0.62)), 14, 58);
-  const titleFont = clamp(rowH * 0.44, 13, 48);
   const labelFont = clamp(Math.min(rowH * 0.24, fits(colW(2), 6, 0.88)), 9, 24);
+
+  // The masjid name is measured against the name it actually is, so a short one
+  // stays the largest thing in the header and a long one shrinks to fit instead
+  // of ellipsing away. Two lines are available, so the longest line is about
+  // half the name -- but a line never breaks mid-word, so the longest word is
+  // the floor.
+  const title = config.profile.name.toUpperCase();
+  const longestWord = title.split(/\s+/).reduce((n, w) => Math.max(n, w.length), 1);
+  const titleLine = Math.max(Math.ceil(title.length / 2), longestWord);
+  const titleFont = clamp(Math.min(rowH * 0.44, fits(colW(3), titleLine, 0.72)), 13, 48);
 
   return (
     <div
@@ -302,7 +311,7 @@ function PrayerListPane({
               WebkitLineClamp: 2,
             }}
           >
-            {config.profile.name.toUpperCase()}
+            {title}
           </div>
           {config.profile.nameArabic?.trim() && (
             <div

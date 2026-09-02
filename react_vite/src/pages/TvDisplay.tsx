@@ -24,6 +24,51 @@ import MiniClockOverlay from '../components/MiniClockOverlay';
 import Ticker from '../components/Ticker';
 import FocusTemplate from '../components/FocusTemplate';
 
+/** Idle delay before the on-screen controls fade away. */
+const CONTROLS_IDLE_MS = 15_000;
+
+/**
+ * Keeps the settings and orientation buttons on screen only while somebody is
+ * there.
+ *
+ * A signage screen spends its life untouched, and two buttons floating over the
+ * prayer times all day is two things too many. Any touch, mouse movement or key
+ * press brings them back for another fifteen seconds. Movement is sampled
+ * rather than handled on every event: a mouse dragged across the screen fires
+ * hundreds of times a second, and each one would otherwise reset the timer
+ * through a fresh state write.
+ */
+function useIdleControls(): boolean {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    let hideTimer: ReturnType<typeof setTimeout>;
+    let lastWake = 0;
+
+    const wake = () => {
+      const now = Date.now();
+      // Re-arming the timer is cheap; re-rendering is not, so only the first
+      // event of each 500ms burst touches state.
+      if (now - lastWake < 500) return;
+      lastWake = now;
+      setVisible(true);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => setVisible(false), CONTROLS_IDLE_MS);
+    };
+
+    const events = ['pointerdown', 'pointermove', 'mousemove', 'touchstart', 'keydown'];
+    events.forEach((e) => window.addEventListener(e, wake, { passive: true }));
+    hideTimer = setTimeout(() => setVisible(false), CONTROLS_IDLE_MS);
+
+    return () => {
+      clearTimeout(hideTimer);
+      events.forEach((e) => window.removeEventListener(e, wake));
+    };
+  }, []);
+
+  return visible;
+}
+
 export default function TvDisplay() {
   const navigate = useNavigate();
   const devicePortrait = useIsPortrait();
@@ -42,6 +87,7 @@ export default function TvDisplay() {
 
   const tapCount = useRef(0);
   const lastTap = useRef(0);
+  const controlsVisible = useIdleControls();
 
   // Any key dismisses an active alert (matches the KeyboardListener).
   useEffect(() => {
@@ -145,31 +191,50 @@ export default function TvDisplay() {
         )}
       </div>
 
-      {/* Settings FAB */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          AudioService.unlock();
-          openSettings();
-        }}
-        className="absolute right-4 flex h-10 w-10 items-center justify-center rounded-full opacity-40 hover:opacity-100"
+      {/* On-screen controls. They fade out after 15s of no input; while faded
+          they take no clicks, so the tap that brings them back cannot also open
+          settings by accident. */}
+      <div
+        className="absolute inset-0"
         style={{
-          // Focus pins a summary bar along the bottom edge; a FAB there would
-          // sit on top of the prayer times.
-          [isFocus ? 'top' : 'bottom']: 16,
-          background: 'var(--surface)',
-          color: 'var(--text)',
-          border: '1px solid var(--accent)',
+          opacity: controlsVisible ? 1 : 0,
+          pointerEvents: 'none', // the wrapper spans the screen; only its buttons take clicks
+          transition: 'opacity 0.4s ease',
         }}
-        aria-label="Settings"
+        aria-hidden={!controlsVisible}
       >
-        ⚙
-      </button>
+        {/* Settings FAB */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            AudioService.unlock();
+            openSettings();
+          }}
+          className="absolute right-4 flex h-10 w-10 items-center justify-center rounded-full opacity-40 hover:opacity-100"
+          style={{
+            // Focus pins a summary bar along the bottom edge; a FAB there would
+            // sit on top of the prayer times.
+            [isFocus ? 'top' : 'bottom']: 16,
+            background: 'var(--surface)',
+            color: 'var(--text)',
+            border: '1px solid var(--accent)',
+            pointerEvents: controlsVisible ? 'auto' : 'none',
+          }}
+          aria-label="Settings"
+          tabIndex={controlsVisible ? 0 : -1}
+        >
+          ⚙
+        </button>
 
-      {/* Orientation toggle FAB — hidden when admin disables it */}
-      {config.meta.showOrientationFab && (
-        <OrientationFab current={config.meta.displayOrientation} pinTop={isFocus} />
-      )}
+        {/* Orientation toggle FAB — hidden when admin disables it */}
+        {config.meta.showOrientationFab && (
+          <OrientationFab
+            current={config.meta.displayOrientation}
+            pinTop={isFocus}
+            interactive={controlsVisible}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -354,7 +419,16 @@ const ORIENTATION_LABELS: Record<DisplayOrientation, string> = {
   'portrait-flip': 'Portrait (flipped)',
 };
 
-function OrientationFab({ current, pinTop }: { current: DisplayOrientation; pinTop: boolean }) {
+function OrientationFab({
+  current,
+  pinTop,
+  interactive,
+}: {
+  current: DisplayOrientation;
+  pinTop: boolean;
+  /** False while the controls are faded out, so a wake-up tap does not rotate. */
+  interactive: boolean;
+}) {
   const config = useAppStore((s) => s.config);
   const saveConfig = useAppStore((s) => s.saveConfig);
   const [tooltip, setTooltip] = useState(false);
@@ -395,7 +469,9 @@ function OrientationFab({ current, pinTop }: { current: DisplayOrientation; pinT
         opacity: 0.35,
         transition: 'opacity 0.2s',
         padding: 0,
+        pointerEvents: interactive ? 'auto' : 'none',
       }}
+      tabIndex={interactive ? 0 : -1}
       onMouseOver={(e) => (e.currentTarget.style.opacity = '1')}
       onMouseOut={(e) => (e.currentTarget.style.opacity = '0.35')}
       onFocus={(e) => (e.currentTarget.style.opacity = '1')}

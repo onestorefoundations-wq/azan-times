@@ -242,7 +242,12 @@ export const SupabaseSync = {
       StorageService.saveConfig({
         ...newConfig,
         profile: { ...newConfig.profile, tenantId },
-        meta: updatedMeta,
+        // newConfig.meta is updatedMeta with the account's display_settings
+        // (font, colours, template, backgrounds) folded in. Overwriting it with
+        // updatedMeta dropped those while still recording the cloud's
+        // display_settings version, so the device believed it was in step and
+        // never pulled them again.
+        meta: newConfig.meta,
       });
       // Cloud state was just adopted wholesale; nothing local is outstanding.
       StorageService.saveSectionVersions((cfg.section_versions ?? {}) as SectionVersions);

@@ -39,6 +39,15 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
+/**
+ * Accounts registered without an email address carry a synthetic one so GoTrue
+ * has something unique to key on. It is not deliverable and not something the
+ * user ever typed, so it must never be shown back to them as their address.
+ */
+const NO_EMAIL_DOMAIN = '@no-email.masjid.invalid';
+const realEmail = (v: string | null | undefined): string =>
+  v && !v.toLowerCase().endsWith(NO_EMAIL_DOMAIN) ? v : '';
+
 interface Session {
   access_token: string;
   refresh_token: string;
@@ -56,11 +65,29 @@ async function sessionResponse(req: Request, session: Session, userId: string) {
 
   if (!tenantId) return json(req, { error: 'Account is not linked to a mosque' }, 403);
 
-  const { data: profile } = await admin
+  // A tenant can hold more than one admin_users row, which made maybeSingle()
+  // fail outright and blank the profile. The auth user's own username picks the
+  // right row; the oldest row is the fallback for tokens minted before the
+  // username claim existed.
+  const metaUsername = typeof meta.username === 'string' ? meta.username : '';
+  let query = admin
     .from('admin_users')
     .select('username, mobile, email, tenant_id')
-    .eq('tenant_id', tenantId)
-    .maybeSingle();
+    .eq('tenant_id', tenantId);
+  if (metaUsername) query = query.eq('username', metaUsername);
+
+  let { data: profile } = await query.maybeSingle();
+
+  if (!profile && metaUsername) {
+    const { data: fallback } = await admin
+      .from('admin_users')
+      .select('username, mobile, email, tenant_id')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    profile = fallback;
+  }
 
   const { data: tenant } = await admin
     .from('tenants')
@@ -78,7 +105,7 @@ async function sessionResponse(req: Request, session: Session, userId: string) {
     tenantId,
     username: profile?.username ?? (typeof meta.username === 'string' ? meta.username : ''),
     mobile: profile?.mobile ?? '',
-    email: profile?.email ?? user?.user?.email ?? '',
+    email: realEmail(profile?.email) || realEmail(user?.user?.email),
     mosqueName: tenant?.name ?? 'Linked Mosque',
   });
 }
@@ -154,7 +181,7 @@ Deno.serve(async (req) => {
       const row = (reg as { tenant_id: string }[] | null)?.[0];
       if (!row) return json(req, { error: 'Registration failed' }, 400);
 
-      const authEmail = (email ?? `${username}@no-email.masjid.invalid`).toLowerCase();
+      const authEmail = (email ?? `${username}${NO_EMAIL_DOMAIN}`).toLowerCase();
       const { data: created, error: createError } = await admin.auth.admin.createUser({
         email: authEmail,
         password,
@@ -169,6 +196,18 @@ Deno.serve(async (req) => {
         await admin.from('tenants').delete().eq('id', row.tenant_id);
         return json(req, { error: createError?.message ?? 'Could not create account' }, 400);
       }
+
+      // 05_supabase_auth.sql mirrors admin_users into auth.users keyed on a
+      // shared id, and calls itself safe to re-run. GoTrue picks its own id for
+      // a new account, so without this the two drift apart and the next run of
+      // that script tries to insert a second auth.users row holding the same
+      // email. Nothing has a foreign key onto admin_users.id, so realigning it
+      // here is free.
+      const { error: idError } = await admin
+        .from('admin_users')
+        .update({ id: created.user.id })
+        .eq('tenant_id', row.tenant_id);
+      if (idError) console.warn('[auth] could not align admin_users.id', idError.message);
 
       const { data: signIn, error: signInError } = await admin.auth.signInWithPassword({
         email: authEmail,

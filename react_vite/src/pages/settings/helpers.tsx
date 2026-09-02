@@ -80,8 +80,16 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...props}
       style={{ ...inputStyle(t), ...(props.style || {}) }}
-      onFocus={(e) => (e.currentTarget.style.borderColor = t.accentTeal)}
-      onBlur={(e) => (e.currentTarget.style.borderColor = t.borderSubtle)}
+      // Spread first, then call through: these two are declared after {...props}
+      // and would otherwise silently swallow any onFocus/onBlur a caller passes.
+      onFocus={(e) => {
+        e.currentTarget.style.borderColor = t.accentTeal;
+        props.onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.borderColor = t.borderSubtle;
+        props.onBlur?.(e);
+      }}
     />
   );
 }

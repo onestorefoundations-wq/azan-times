@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { JumuahSettings, SlideshowSettings } from '../../core/appConfig';
 import {
   SettingsDropdown,
@@ -9,6 +10,54 @@ import {
   TextInput,
   useTheme,
 } from './helpers';
+
+/**
+ * A whole-number field that can be emptied while you are typing in it.
+ *
+ * These were controlled inputs coerced on every keystroke, with an empty box
+ * substituting the setting's default: backspacing the 5 out of "Duration Per
+ * Image" put a 5 straight back, so the field looked welded to its default. On a
+ * soft keyboard, where clearing and retyping is the natural gesture, there was
+ * no way past it at all.
+ *
+ * The draft string is held while the box is being edited and only turned into a
+ * number when it parses, so an empty field stays empty. Leaving the field
+ * settles it: a blank or unparseable box falls back, anything else is clamped.
+ */
+function NumberField({
+  value,
+  onCommit,
+  fallback,
+  min = 0,
+  max,
+}: {
+  value: number;
+  onCommit: (n: number) => void;
+  fallback: number;
+  min?: number;
+  max?: number;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const settle = (n: number) => Math.max(min, Math.min(max ?? Number.MAX_SAFE_INTEGER, n));
+
+  return (
+    <TextInput
+      type="number"
+      inputMode="numeric"
+      value={draft ?? String(value)}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = parseInt(e.target.value, 10);
+        if (!Number.isNaN(n)) onCommit(settle(n));
+      }}
+      onBlur={() => {
+        const n = parseInt(draft ?? '', 10);
+        if (draft !== null) onCommit(Number.isNaN(n) ? fallback : settle(n));
+        setDraft(null);
+      }}
+    />
+  );
+}
 
 export default function TabSlideshowJumuah({
   slideshow,
@@ -23,7 +72,6 @@ export default function TabSlideshowJumuah({
 }) {
   const t = useTheme();
   const s = slideshow;
-  const num = (v: string, fb: number) => (v === '' ? fb : parseInt(v, 10) || 0);
 
   const minSec = (
     minVal: number,
@@ -33,11 +81,11 @@ export default function TabSlideshowJumuah({
   ) => (
     <div style={{ display: 'flex', gap: 8 }}>
       <div style={{ flex: 1, position: 'relative' }}>
-        <TextInput type="number" value={minVal} onChange={(e) => onMin(num(e.target.value, 0))} />
+        <NumberField value={minVal} fallback={0} onCommit={onMin} />
         <span style={suffix(t)}>min</span>
       </div>
       <div style={{ flex: 1, position: 'relative' }}>
-        <TextInput type="number" value={secVal} onChange={(e) => onSec(Math.min(59, num(e.target.value, 0)))} />
+        <NumberField value={secVal} fallback={0} max={59} onCommit={onSec} />
         <span style={suffix(t)}>sec</span>
       </div>
     </div>
@@ -91,10 +139,11 @@ export default function TabSlideshowJumuah({
       </SettingsFormField>
 
       <SettingsFormField label="Duration Per Image (Seconds)" helpText="How long each individual image displays within the slideshow.">
-        <TextInput
-          type="number"
+        <NumberField
           value={s.durationPerImageSeconds}
-          onChange={(e) => onSlideshowChange({ ...s, durationPerImageSeconds: num(e.target.value, 5) })}
+          fallback={5}
+          min={1}
+          onCommit={(n) => onSlideshowChange({ ...s, durationPerImageSeconds: n })}
         />
       </SettingsFormField>
 
@@ -144,19 +193,19 @@ export default function TabSlideshowJumuah({
       <SettingsFormRow
         left={
           <SettingsFormField label="Pause Before Adhan (Mins)">
-            <TextInput
-              type="number"
+            <NumberField
               value={s.pauseBeforeAdhanMins}
-              onChange={(e) => onSlideshowChange({ ...s, pauseBeforeAdhanMins: num(e.target.value, 2) })}
+              fallback={2}
+              onCommit={(n) => onSlideshowChange({ ...s, pauseBeforeAdhanMins: n })}
             />
           </SettingsFormField>
         }
         right={
           <SettingsFormField label="Pause After Iqamah (Mins)">
-            <TextInput
-              type="number"
+            <NumberField
               value={s.pauseAfterIqamahMins}
-              onChange={(e) => onSlideshowChange({ ...s, pauseAfterIqamahMins: num(e.target.value, 15) })}
+              fallback={15}
+              onCommit={(n) => onSlideshowChange({ ...s, pauseAfterIqamahMins: n })}
             />
           </SettingsFormField>
         }

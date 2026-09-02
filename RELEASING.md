@@ -54,16 +54,20 @@ build `com.pro26.masjid_display`.
 
 ### The current field state
 
-Releases up to and including **v1.0.1 are signed with the Android debug key**
-(`CN=Android Debug`), because they were built with `assembleDebug` and no
-`keystore.properties` was present. They install and update among themselves, but
-a debug-signed APK is trivially re-signable by anyone and must not be what the
-project ships long-term.
+**v1.0.5 is the first release signed with the real key**
+(`CN=Masjid App by Pro26, OU=Masjid Azan Times, O=Pro26, C=IN`). Everything
+before it — v1.0.0-preview through v1.0.4 — carries the Android debug key,
+because those were built with `assembleDebug` before `keystore.properties`
+existed.
 
-Moving to the real key is a one-way door for anyone who already installed a
-debug-signed build: the signature will not match and they must uninstall first.
-The number of devices that affects only grows, so do it at the next release
-rather than later.
+The two signatures are incompatible, so **a device running v1.0.4 or earlier
+cannot update to v1.0.5**: Android rejects the install as a signature mismatch,
+and the app has to be uninstalled first. Uninstalling clears the device's local
+settings; a display linked to a cloud account gets them back on sign-in, one
+that was configured locally does not.
+
+That break happens exactly once. Every release from v1.0.5 on updates normally,
+provided `keystore.properties` stays in place and points at the same `.jks`.
 
 ## Each release
 

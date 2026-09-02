@@ -95,6 +95,68 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
 }
 
 /**
+ * A number field that can be cleared, and half-typed, without fighting back.
+ *
+ * The settings tabs used to coerce these on every keystroke, which broke two
+ * ordinary gestures. Substituting a default for an empty box meant backspacing
+ * the value out put it straight back, so the field looked welded to its
+ * default. And `parseInt(v) || 0` turns a lone "-" into 0, so a negative number
+ * -- a prayer offset of -2 minutes, a longitude in the Americas -- could not be
+ * typed starting with the minus sign.
+ *
+ * Holding the draft text while the box is being edited fixes both: nothing is
+ * converted until it parses, so "", "-" and "11." are all legal things to be
+ * in the middle of typing. Leaving the field settles it, falling back only if
+ * what is there is unusable.
+ */
+export function NumberField({
+  value,
+  onCommit,
+  fallback,
+  min,
+  max,
+  decimals = false,
+  style,
+}: {
+  value: number;
+  onCommit: (n: number) => void;
+  /** Used when the box is left blank or unparseable. */
+  fallback: number;
+  min?: number;
+  max?: number;
+  /** Accept a decimal point -- coordinates need it, minutes do not. */
+  decimals?: boolean;
+  style?: CSSProperties;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const parse = (v: string) => (decimals ? parseFloat(v) : parseInt(v, 10));
+  const settle = (n: number) =>
+    Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, n));
+
+  return (
+    <TextInput
+      type="number"
+      inputMode={decimals ? 'decimal' : 'numeric'}
+      value={draft ?? String(value)}
+      style={style}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = parse(e.target.value);
+        if (!Number.isNaN(n)) onCommit(settle(n));
+      }}
+      onBlur={() => {
+        if (draft !== null) {
+          const n = parse(draft);
+          onCommit(Number.isNaN(n) ? fallback : settle(n));
+        }
+        setDraft(null);
+      }}
+    />
+  );
+}
+
+/**
  * Square hit area for the little glyph buttons (🗑 ↑ ↓). A 16px emoji is a
  * fine target with a mouse and a miserable one with a thumb, so they all get a
  * real box underneath.

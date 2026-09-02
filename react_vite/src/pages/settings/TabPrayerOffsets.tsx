@@ -1,5 +1,5 @@
 import { PrayerKey, PrayerOffset, TimeAdjustments } from '../../core/appConfig';
-import { SettingsTabScaffold, TextInput, useIsNarrow, useTheme } from './helpers';
+import { NumberField, SettingsTabScaffold, useIsNarrow, useTheme } from './helpers';
 
 const ROWS: [PrayerKey, string][] = [
   ['fajr', 'Fajr'],
@@ -22,12 +22,10 @@ export default function TabPrayerOffsets({
   const update = (key: PrayerKey, patch: Partial<PrayerOffset>) =>
     onChange({ ...adjustments, [key]: { ...adjustments[key], ...patch } });
 
+  // No min: an Adhan offset is routinely negative, and the old
+  // `parseInt(v) || 0` turned the leading "-" into 0 before the digits arrived.
   const numField = (val: number, on: (n: number) => void) => (
-    <TextInput
-      type="number"
-      value={Number.isFinite(val) ? val : 0}
-      onChange={(e) => on(parseInt(e.target.value, 10) || 0)}
-    />
+    <NumberField value={Number.isFinite(val) ? val : 0} fallback={0} onCommit={on} />
   );
 
   return (

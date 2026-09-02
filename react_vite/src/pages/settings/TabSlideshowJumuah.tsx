@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { JumuahSettings, SlideshowSettings } from '../../core/appConfig';
 import {
   SettingsDropdown,
@@ -7,57 +6,10 @@ import {
   SettingsSectionHeader,
   SettingsTabScaffold,
   SettingsToggleRow,
+  NumberField,
   TextInput,
   useTheme,
 } from './helpers';
-
-/**
- * A whole-number field that can be emptied while you are typing in it.
- *
- * These were controlled inputs coerced on every keystroke, with an empty box
- * substituting the setting's default: backspacing the 5 out of "Duration Per
- * Image" put a 5 straight back, so the field looked welded to its default. On a
- * soft keyboard, where clearing and retyping is the natural gesture, there was
- * no way past it at all.
- *
- * The draft string is held while the box is being edited and only turned into a
- * number when it parses, so an empty field stays empty. Leaving the field
- * settles it: a blank or unparseable box falls back, anything else is clamped.
- */
-function NumberField({
-  value,
-  onCommit,
-  fallback,
-  min = 0,
-  max,
-}: {
-  value: number;
-  onCommit: (n: number) => void;
-  fallback: number;
-  min?: number;
-  max?: number;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const settle = (n: number) => Math.max(min, Math.min(max ?? Number.MAX_SAFE_INTEGER, n));
-
-  return (
-    <TextInput
-      type="number"
-      inputMode="numeric"
-      value={draft ?? String(value)}
-      onChange={(e) => {
-        setDraft(e.target.value);
-        const n = parseInt(e.target.value, 10);
-        if (!Number.isNaN(n)) onCommit(settle(n));
-      }}
-      onBlur={() => {
-        const n = parseInt(draft ?? '', 10);
-        if (draft !== null) onCommit(Number.isNaN(n) ? fallback : settle(n));
-        setDraft(null);
-      }}
-    />
-  );
-}
 
 export default function TabSlideshowJumuah({
   slideshow,
@@ -81,11 +33,11 @@ export default function TabSlideshowJumuah({
   ) => (
     <div style={{ display: 'flex', gap: 8 }}>
       <div style={{ flex: 1, position: 'relative' }}>
-        <NumberField value={minVal} fallback={0} onCommit={onMin} />
+        <NumberField value={minVal} fallback={0} min={0} onCommit={onMin} />
         <span style={suffix(t)}>min</span>
       </div>
       <div style={{ flex: 1, position: 'relative' }}>
-        <NumberField value={secVal} fallback={0} max={59} onCommit={onSec} />
+        <NumberField value={secVal} fallback={0} min={0} max={59} onCommit={onSec} />
         <span style={suffix(t)}>sec</span>
       </div>
     </div>
@@ -196,6 +148,7 @@ export default function TabSlideshowJumuah({
             <NumberField
               value={s.pauseBeforeAdhanMins}
               fallback={2}
+              min={0}
               onCommit={(n) => onSlideshowChange({ ...s, pauseBeforeAdhanMins: n })}
             />
           </SettingsFormField>
@@ -205,6 +158,7 @@ export default function TabSlideshowJumuah({
             <NumberField
               value={s.pauseAfterIqamahMins}
               fallback={15}
+              min={0}
               onCommit={(n) => onSlideshowChange({ ...s, pauseAfterIqamahMins: n })}
             />
           </SettingsFormField>

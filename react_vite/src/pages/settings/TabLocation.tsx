@@ -4,6 +4,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MasjidProfile } from '../../core/appConfig';
 import {
+  NumberField,
   OutlineButton,
   SettingsDropdown,
   SettingsFormField,
@@ -209,12 +210,26 @@ export default function TabLocation({
       <SettingsFormRow
         left={
           <SettingsFormField label="Latitude">
-            <TextInput type="number" value={lat} onChange={(e) => onChange({ ...profile, latitude: parseFloat(e.target.value) || 0 })} />
+            <NumberField
+              value={lat}
+              fallback={0}
+              min={-90}
+              max={90}
+              decimals
+              onCommit={(n) => onChange({ ...profile, latitude: n })}
+            />
           </SettingsFormField>
         }
         right={
           <SettingsFormField label="Longitude">
-            <TextInput type="number" value={lon} onChange={(e) => onChange({ ...profile, longitude: parseFloat(e.target.value) || 0 })} />
+            <NumberField
+              value={lon}
+              fallback={0}
+              min={-180}
+              max={180}
+              decimals
+              onCommit={(n) => onChange({ ...profile, longitude: n })}
+            />
           </SettingsFormField>
         }
       />

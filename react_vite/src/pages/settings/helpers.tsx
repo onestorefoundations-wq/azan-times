@@ -3,7 +3,24 @@
  * Shared settings UI: theme tokens + form widgets. Port of
  * flutter_app/lib/pages/settings/settings_helpers.dart.
  */
-import { CSSProperties, ReactNode, createContext, useContext, useState } from 'react';
+import { CSSProperties, ReactNode, createContext, useContext, useEffect, useState } from 'react';
+
+/**
+ * True while the viewport is phone-sized. The settings shell uses it to swap
+ * the sidebar rail for a drawer; individual tabs use it to loosen fixed widths.
+ */
+export function useIsNarrow(breakpoint = 760): boolean {
+  const query = `(max-width: ${breakpoint}px)`;
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = () => setNarrow(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [query]);
+  return narrow;
+}
 
 // ── Theme tokens (light/dark) ──────────────────────────────────
 export interface SettingsTokens {
@@ -69,12 +86,32 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   );
 }
 
+/**
+ * Square hit area for the little glyph buttons (🗑 ↑ ↓). A 16px emoji is a
+ * fine target with a mouse and a miserable one with a thumb, so they all get a
+ * real box underneath.
+ */
+export function iconButtonStyle(color: string, size = 38): CSSProperties {
+  return {
+    flexShrink: 0,
+    width: size,
+    height: size,
+    borderRadius: 8,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 16,
+    color,
+  };
+}
+
 // ── Layout ─────────────────────────────────────────────────────
 export function SettingsTabScaffold({ title, children }: { title: string; children: ReactNode }) {
   const t = useTheme();
+  const narrow = useIsNarrow();
   return (
-    <div className="h-full overflow-y-auto" style={{ padding: 24 }}>
-      <div style={{ fontSize: 20, fontWeight: 700, color: t.textPrimary }}>{title}</div>
+    <div className="h-full overflow-y-auto" style={{ padding: narrow ? '16px 14px 32px' : 24 }}>
+      <div style={{ fontSize: narrow ? 18 : 20, fontWeight: 700, color: t.textPrimary }}>{title}</div>
       <div style={{ height: 1, background: t.borderSubtle, margin: '12px 0' }} />
       {children}
     </div>
@@ -104,8 +141,8 @@ export function SettingsFormField({
 export function SettingsFormRow({ left, right }: { left: ReactNode; right: ReactNode }) {
   return (
     <div style={{ marginBottom: 0, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-      <div style={{ flex: 1, minWidth: 240 }}>{left}</div>
-      <div style={{ flex: 1, minWidth: 240 }}>{right}</div>
+      <div style={{ flex: 1, minWidth: 200 }}>{left}</div>
+      <div style={{ flex: 1, minWidth: 200 }}>{right}</div>
     </div>
   );
 }

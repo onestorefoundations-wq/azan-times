@@ -114,9 +114,9 @@ export default function TabCloudAccount({ onConfigRefreshed }: { onConfigRefresh
   };
 
   const infoRow = (label: string, value: string) => (
-    <div style={{ display: 'flex', marginBottom: 8 }}>
-      <span style={{ width: 140, fontSize: 13, fontWeight: 600, color: t.textSecondary }}>{label}</span>
-      <span style={{ flex: 1, fontSize: 13, color: t.textPrimary }}>{value}</span>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+      <span style={{ width: 140, flexShrink: 0, fontSize: 13, fontWeight: 600, color: t.textSecondary }}>{label}</span>
+      <span style={{ flex: '1 1 180px', fontSize: 13, color: t.textPrimary, wordBreak: 'break-all' }}>{value}</span>
     </div>
   );
 

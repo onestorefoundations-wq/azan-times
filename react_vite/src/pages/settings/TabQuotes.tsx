@@ -7,6 +7,7 @@ import {
   SettingsTabScaffold,
   SettingsToggleRow,
   TextInput,
+  iconButtonStyle,
   useTheme,
 } from './helpers';
 
@@ -88,8 +89,9 @@ export default function TabQuotes({
           placeholder="Quote text..."
           onChange={(e) => setDraftText(e.target.value)}
         />
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <TextInput
+            style={{ flex: '1 1 200px', width: 'auto' }}
             value={draftSource}
             placeholder="Source (optional), e.g. Daraqutni, Hasan"
             onChange={(e) => setDraftSource(e.target.value)}
@@ -132,39 +134,31 @@ export default function TabQuotes({
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => move(i, -1)}
-                disabled={i === 0}
-                title="Move up"
-                style={{
-                  flexShrink: 0,
-                  color: t.textSecondary,
-                  fontSize: 16,
-                  opacity: i === 0 ? 0.3 : 1,
-                }}
-              >
-                ↑
-              </button>
-              <button
-                onClick={() => move(i, 1)}
-                disabled={i === quotes.entries.length - 1}
-                title="Move down"
-                style={{
-                  flexShrink: 0,
-                  color: t.textSecondary,
-                  fontSize: 16,
-                  opacity: i === quotes.entries.length - 1 ? 0.3 : 1,
-                }}
-              >
-                ↓
-              </button>
-              <button
-                onClick={() => removeQuote(q.id)}
-                title="Remove"
-                style={{ flexShrink: 0, color: t.accentRed, fontSize: 18 }}
-              >
-                🗑
-              </button>
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 'auto' }}>
+                <button
+                  onClick={() => move(i, -1)}
+                  disabled={i === 0}
+                  title="Move up"
+                  style={{ ...iconButtonStyle(t.textSecondary), opacity: i === 0 ? 0.3 : 1 }}
+                >
+                  ↑
+                </button>
+                <button
+                  onClick={() => move(i, 1)}
+                  disabled={i === quotes.entries.length - 1}
+                  title="Move down"
+                  style={{ ...iconButtonStyle(t.textSecondary), opacity: i === quotes.entries.length - 1 ? 0.3 : 1 }}
+                >
+                  ↓
+                </button>
+                <button
+                  onClick={() => removeQuote(q.id)}
+                  title="Remove"
+                  style={iconButtonStyle(t.accentRed)}
+                >
+                  🗑
+                </button>
+              </div>
             </div>
           ))}
         </div>

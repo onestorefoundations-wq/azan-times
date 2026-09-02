@@ -1,5 +1,5 @@
 import { PrayerKey, PrayerOffset, TimeAdjustments } from '../../core/appConfig';
-import { SettingsTabScaffold, TextInput, useTheme } from './helpers';
+import { SettingsTabScaffold, TextInput, useIsNarrow, useTheme } from './helpers';
 
 const ROWS: [PrayerKey, string][] = [
   ['fajr', 'Fajr'],
@@ -17,6 +17,7 @@ export default function TabPrayerOffsets({
   onChange: (a: TimeAdjustments) => void;
 }) {
   const t = useTheme();
+  const narrow = useIsNarrow();
 
   const update = (key: PrayerKey, patch: Partial<PrayerOffset>) =>
     onChange({ ...adjustments, [key]: { ...adjustments[key], ...patch } });
@@ -35,31 +36,55 @@ export default function TabPrayerOffsets({
         Modify Adhan offsets (mins, can be negative) and custom Iqamah wait timings (mins after Adhan).
       </div>
 
-      <div style={{ display: 'flex', padding: '10px 12px', background: t.bgElevated, borderBottom: `1px solid ${t.borderSubtle}`, borderTopLeftRadius: 10, borderTopRightRadius: 10 }}>
-        <HeaderCell text="Prayer" />
-        <HeaderCell text="Adhan Offset (Mins)" />
-        <HeaderCell text="Iqamah Wait (Mins)" />
-      </div>
-
-      <div style={{ border: `1px solid ${t.borderSubtle}`, borderBottomLeftRadius: 10, borderBottomRightRadius: 10 }}>
-        {ROWS.map(([key, label], i) => (
-          <div
-            key={key}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              padding: '10px 12px',
-              borderBottom: i === ROWS.length - 1 ? 'none' : `1px solid ${t.borderSubtle}`,
-            }}
-          >
-            <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: t.textPrimary }}>{label}</div>
-            <div style={{ flex: 1, paddingRight: 12 }}>
-              {numField(adjustments[key].adhanOffset, (n) => update(key, { adhanOffset: n }))}
+      {/* Three columns squeeze both number fields to nothing on a phone, so
+          narrow screens get one card per prayer with the fields side by side. */}
+      {narrow ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {ROWS.map(([key, label]) => (
+            <div key={key} style={{ padding: 12, borderRadius: 10, background: t.bgElevated, border: `1px solid ${t.borderSubtle}` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textPrimary, marginBottom: 8 }}>{label}</div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: t.textSecondary, marginBottom: 4 }}>Adhan offset</div>
+                  {numField(adjustments[key].adhanOffset, (n) => update(key, { adhanOffset: n }))}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: t.textSecondary, marginBottom: 4 }}>Iqamah wait</div>
+                  {numField(adjustments[key].iqamahWait, (n) => update(key, { iqamahWait: n }))}
+                </div>
+              </div>
             </div>
-            <div style={{ flex: 1 }}>{numField(adjustments[key].iqamahWait, (n) => update(key, { iqamahWait: n }))}</div>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', padding: '10px 12px', background: t.bgElevated, borderBottom: `1px solid ${t.borderSubtle}`, borderTopLeftRadius: 10, borderTopRightRadius: 10 }}>
+            <HeaderCell text="Prayer" />
+            <HeaderCell text="Adhan Offset (Mins)" />
+            <HeaderCell text="Iqamah Wait (Mins)" />
           </div>
-        ))}
-      </div>
+
+          <div style={{ border: `1px solid ${t.borderSubtle}`, borderBottomLeftRadius: 10, borderBottomRightRadius: 10 }}>
+            {ROWS.map(([key, label], i) => (
+              <div
+                key={key}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '10px 12px',
+                  borderBottom: i === ROWS.length - 1 ? 'none' : `1px solid ${t.borderSubtle}`,
+                }}
+              >
+                <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: t.textPrimary }}>{label}</div>
+                <div style={{ flex: 1, paddingRight: 12 }}>
+                  {numField(adjustments[key].adhanOffset, (n) => update(key, { adhanOffset: n }))}
+                </div>
+                <div style={{ flex: 1 }}>{numField(adjustments[key].iqamahWait, (n) => update(key, { iqamahWait: n }))}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </SettingsTabScaffold>
   );
 

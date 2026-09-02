@@ -173,8 +173,8 @@ export default function TabSlideshowJumuah({
           fontSize: 12,
         }}
       >
-        <strong style={{ color: t.accentTeal }}>Slide Images — managed in Media Library.</strong> Upload slides from the
-        Media Library tab. Use "Slides Landscape" for horizontal TVs and "Slides Portrait" for vertical screens.
+        <strong style={{ color: t.accentTeal }}>Slide Images — managed in Media Library.</strong> Add them under
+        Slideshow Slides: the Landscape row for horizontal TVs, the Portrait row for vertical screens.
       </div>
 
       <SettingsSectionHeader title="Friday Jumu'ah Override" />

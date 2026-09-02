@@ -85,7 +85,7 @@ export default function TabSystemPrefs({
             step={5}
             value={f.analogClockSize}
             onChange={(e) => onFeaturesChange({ ...f, analogClockSize: parseInt(e.target.value, 10) })}
-            style={{ width: '100%', accentColor: t.accentTeal }}
+            style={{ width: '100%', height: 28, accentColor: t.accentTeal }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: t.textSecondary, marginTop: 2 }}>
             <span>Compact (30%)</span>
@@ -111,7 +111,7 @@ export default function TabSystemPrefs({
             step={5}
             value={f.digitalClockSizePercent ?? 75}
             onChange={(e) => onFeaturesChange({ ...f, digitalClockSizePercent: parseInt(e.target.value, 10) })}
-            style={{ width: '100%', accentColor: t.accentTeal }}
+            style={{ width: '100%', height: 28, accentColor: t.accentTeal }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: t.textSecondary, marginTop: 2 }}>
             <span>Compact (40%)</span>

@@ -44,8 +44,9 @@ export default function PinGate({ onOk, onCancel }: { onOk: () => void; onCancel
     <div className="flex h-full w-full items-center justify-center" style={{ background: t.bgPrimary, padding: 16 }}>
       <div
         style={{
-          width: 360,
-          padding: 32,
+          width: '100%',
+          maxWidth: 360,
+          padding: 24,
           borderRadius: 20,
           background: t.bgSurface,
           border: `1px solid ${t.borderSubtle}`,

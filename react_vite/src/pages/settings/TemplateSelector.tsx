@@ -53,7 +53,9 @@ export default function TemplateSelector({
               key={tpl.id}
               onClick={() => onChange(tpl.id)}
               style={{
-                width: 190,
+                flex: '1 1 180px',
+                minWidth: 160,
+                maxWidth: 240,
                 textAlign: 'left',
                 padding: 10,
                 borderRadius: 10,

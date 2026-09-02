@@ -7,6 +7,7 @@ import {
   SettingsTabScaffold,
   SettingsToggleRow,
   TextInput,
+  iconButtonStyle,
   useTheme,
 } from './helpers';
 
@@ -56,8 +57,9 @@ export default function TabTicker({
         Add text messages to scroll across the bottom of the screen.
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <TextInput
+          style={{ flex: '1 1 200px', width: 'auto' }}
           value={draftMsg}
           placeholder="Enter a new message..."
           onChange={(e) => setDraftMsg(e.target.value)}
@@ -81,7 +83,7 @@ export default function TabTicker({
               }}
             >
               <span style={{ flex: 1, fontSize: 14, color: t.textPrimary }}>{m}</span>
-              <button onClick={() => removeMessage(i)} title="Remove" style={{ color: t.accentRed, fontSize: 18 }}>
+              <button onClick={() => removeMessage(i)} title="Remove" style={iconButtonStyle(t.accentRed)}>
                 🗑
               </button>
             </div>

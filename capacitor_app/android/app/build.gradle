@@ -7,8 +7,11 @@ android {
         applicationId "com.pro26.masjid_display"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Bump versionCode on every published release: Android refuses to
+        // install an APK whose code is not higher than the installed one, so a
+        // repeated code makes the update fail with a bare "App not installed".
+        versionCode 2
+        versionName "1.0.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

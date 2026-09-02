@@ -93,9 +93,13 @@ let lastAlertedIqamah: string | null = null;
 let alertTimeout: number | null = null; // epoch ms
 let inSlideshowPhase = false;
 let mediaChannel: RealtimeChannel | null = null;
+let mediaPollTimer: ReturnType<typeof setInterval> | null = null;
 let uploadingPending = false;
 
 const MEDIA_SNAPSHOT_KEY = 'media_library_snapshot';
+
+/** Matches the config sync interval in supabaseSync.startSync. */
+const MEDIA_POLL_MS = 5 * 60_000;
 
 /** Convert a stored pending entry to a MediaFile with a displayable blob URL. */
 function pendingToMediaFile(e: PendingEntry): MediaFile {
@@ -375,6 +379,18 @@ export const useAppStore = create<AppState>((set, get) => {
     if (!tenantId) return;
     if (mediaChannel) void mediaChannel.unsubscribe();
     mediaChannel = MediaLibraryService.subscribeToLibrary(tenantId, (files) => set({ mediaFiles: files }));
+
+    // Realtime was the only thing that ever brought a new slide to a second
+    // screen: syncNow polls mosque_configs, but slides live in media_library,
+    // and refreshMediaLibrary ran only at startup and when a config section
+    // moved. Adding a slide changes neither, so if the socket delivered
+    // nothing the other display stayed blank until it was restarted. Poll on
+    // the same cadence as the config sync so realtime is an optimisation
+    // rather than the only path.
+    if (mediaPollTimer) clearInterval(mediaPollTimer);
+    mediaPollTimer = setInterval(() => {
+      if (navigator.onLine && isLinked(get().config)) void get().refreshMediaLibrary();
+    }, MEDIA_POLL_MS);
   };
 
   return {
@@ -403,6 +419,10 @@ export const useAppStore = create<AppState>((set, get) => {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && isLinked(get().config)) {
           void SupabaseSync.resubscribeIfNeeded();
+          // resubscribeIfNeeded only re-establishes the config channel and
+          // pulls mosque_configs; slides live in media_library and would
+          // otherwise wait for the next poll.
+          void get().refreshMediaLibrary();
         }
       });
     },
@@ -430,6 +450,10 @@ export const useAppStore = create<AppState>((set, get) => {
       if (mediaChannel) {
         void mediaChannel.unsubscribe();
         mediaChannel = null;
+      }
+      if (mediaPollTimer) {
+        clearInterval(mediaPollTimer);
+        mediaPollTimer = null;
       }
       set({ mediaFiles: [] });
       await get().startSyncIfLinked();

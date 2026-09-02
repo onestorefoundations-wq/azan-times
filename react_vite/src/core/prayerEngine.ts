@@ -165,6 +165,7 @@ export function getCurrentPrayerState(
   prayers: PrayerConfig[],
   pauseBeforeAdhanMins = 2,
   pauseAfterIqamahMins = 15,
+  config?: AppConfig,
 ): PrayerStateResult {
   const now = new Date();
 
@@ -182,15 +183,36 @@ export function getCurrentPrayerState(
     return { state: 'iqamahCountdown', prayer };
   }
 
-  return { state: 'idle', prayer: getNextPrayer(prayers) };
+  return { state: 'idle', prayer: getNextPrayer(prayers, config) };
 }
 
-export function getNextPrayer(prayers: PrayerConfig[]): PrayerConfig | null {
+/**
+ * The next prayer, rolling over to tomorrow once today's are done.
+ *
+ * Scanning only today returned null from the last adhan until midnight -- most
+ * of four hours, every night. Everything keyed off it then had nothing to show:
+ * the Focus template's next-prayer pane rendered an empty div, and since that
+ * pane is also the rotation's fallback, the screen simply went blank for part
+ * of its cycle. After Isha the next prayer is tomorrow's Fajr; that is a real
+ * answer, and the one a congregation wants at 10pm.
+ *
+ * `config` is optional so the public page, which only ever asks about a day it
+ * is already showing, can keep calling it with today's list alone.
+ */
+export function getNextPrayer(
+  prayers: PrayerConfig[],
+  config?: AppConfig,
+): PrayerConfig | null {
   const now = new Date();
   for (const p of prayers) {
     if (p.adhanTime > now) return p;
   }
-  return null;
+
+  if (!config) return null;
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return calculatePrayers(config, tomorrow).find((p) => p.adhanTime > now) ?? null;
 }
 
 // ── Formatters ─────────────────────────────────────────────────

@@ -282,8 +282,11 @@ export const useAppStore = create<AppState>((set, get) => {
       prayers,
       ss.pauseBeforeAdhanMins,
       ss.pauseAfterIqamahMins,
+      config,
     );
-    const next = getNextPrayer(prayers);
+    // config lets this roll over to tomorrow's Fajr after the last adhan,
+    // instead of reporting no next prayer for the rest of the night.
+    const next = getNextPrayer(prayers, config);
 
     let displayState = get().displayState;
 

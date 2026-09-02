@@ -26,6 +26,26 @@ interface Place {
   lon: number;
 }
 
+/**
+ * getCurrentPosition's own messages are written for a browser on a phone
+ * ("User denied Geolocation"), and say nothing about what to do next. On the TV
+ * boxes this runs on, the usual failure is not a refusal at all: the box has no
+ * location hardware to ask, which is why the manifest marks hardware.location
+ * as not required. Each case names the way out instead.
+ */
+function geolocationMessage(e: GeolocationPositionError): string {
+  switch (e.code) {
+    case e.PERMISSION_DENIED:
+      return 'Location permission was refused. Allow it in Android Settings → Apps → Masjid Display → Permissions, or set the location from the map below instead.';
+    case e.POSITION_UNAVAILABLE:
+      return 'No location service answered. Most TV boxes have no GPS — use “Select from Map” below to search for the masjid by name, or type the coordinates in by hand.';
+    case e.TIMEOUT:
+      return 'Locating timed out after 15 seconds. Indoors that usually means no signal reaches the device — use “Select from Map” below instead.';
+    default:
+      return `Could not get location: ${e.message}`;
+  }
+}
+
 function ClickHandler({ onPick }: { onPick: (lat: number, lon: number) => void }) {
   useMapEvents({ click: (e) => onPick(e.latlng.lat, e.latlng.lng) });
   return null;
@@ -48,6 +68,7 @@ export default function TabLocation({
   const [showMap, setShowMap] = useState(false);
   const [gpsBusy, setGpsBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Place[]>([]);
 
@@ -58,16 +79,44 @@ export default function TabLocation({
     onChange({ ...profile, latitude: la, longitude: lo });
 
   const getLocation = () => {
-    setGpsBusy(true);
     setErr(null);
+    setNote(null);
+
+    // Some older WebViews leave navigator.geolocation off entirely rather than
+    // failing the call. Without this the button would throw instead of
+    // explaining itself.
+    if (!navigator.geolocation) {
+      setErr(
+        'This device has no location service at all. Use “Select from Map” below to search for the masjid by name, or type the coordinates in by hand.',
+      );
+      return;
+    }
+
+    setGpsBusy(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setLatLon(+pos.coords.latitude.toFixed(6), +pos.coords.longitude.toFixed(6));
+        const la = +pos.coords.latitude.toFixed(6);
+        const lo = +pos.coords.longitude.toFixed(6);
+        setLatLon(la, lo);
         setGpsBusy(false);
+
+        // Show the fix on the map rather than only as two numbers: a wrong
+        // reading -- a box geolocating by IP lands in the wrong city -- is
+        // obvious on a map and invisible as decimals. The map needs tiles from
+        // the network, so offline it stays closed and the note says why.
+        const online = typeof navigator.onLine === 'boolean' ? navigator.onLine : true;
+        setShowMap(online);
+        const accuracy = Math.round(pos.coords.accuracy);
+        const found = `Found ${la}, ${lo}${Number.isFinite(accuracy) ? ` (±${accuracy} m)` : ''}.`;
+        setNote(
+          online
+            ? `${found} Check the pin below — tap the map to correct it.`
+            : `${found} The map needs internet to show it, so check the coordinates by hand.`,
+        );
       },
       (e) => {
-        setErr(`Could not get location: ${e.message}`);
         setGpsBusy(false);
+        setErr(geolocationMessage(e));
       },
       { enableHighAccuracy: true, timeout: 15000 },
     );
@@ -101,7 +150,14 @@ export default function TabLocation({
         <OutlineButton onClick={() => setShowMap((v) => !v)}>{showMap ? '🗺️ Hide Map' : '🗺️ Select from Map'}</OutlineButton>
       </div>
 
-      {err && <div style={{ color: t.accentRed, fontSize: 12, marginBottom: 8 }}>{err}</div>}
+      {err && (
+        <div style={{ color: t.accentRed, fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>{err}</div>
+      )}
+      {note && (
+        <div style={{ color: t.accentTeal, fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
+          {note}
+        </div>
+      )}
 
       {showMap && (
         <div style={{ marginBottom: 16 }}>

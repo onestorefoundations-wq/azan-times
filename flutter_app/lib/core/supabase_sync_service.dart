@@ -452,9 +452,12 @@ class SupabaseSyncService {
         localMeta: updatedMeta,
       );
       final profileWithTenant = newConfig.profile.copyWith(tenantId: tenantId);
+      // newConfig.meta is updatedMeta with the account's display_settings
+      // (font, colours, template, backgrounds) folded in. Passing updatedMeta
+      // again dropped those while still recording the cloud's display_settings
+      // version, so the device believed it was in step and never pulled them.
       await StorageService.saveConfig(newConfig.copyWith(
         profile: profileWithTenant,
-        meta: updatedMeta,
       ));
       // Cloud state was just adopted wholesale; nothing local is outstanding.
       await StorageService.saveSectionVersions(

@@ -33,11 +33,39 @@ import { json, preflight } from '../_shared/cors.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
+/**
+ * Service-role client. Used for the admin API and for every table read, and
+ * deliberately never used to sign anybody in: signInWithPassword stores the
+ * resulting user session on the client it was called on, and supabase-js then
+ * sends that user's access token on subsequent PostgREST requests instead of
+ * the service key. The role silently drops from `service_role` to
+ * `authenticated`, which is revoked on admin_users -- so the profile read
+ * started returning 403 while the tenants read beside it still succeeded under
+ * its own RLS policy. Nothing surfaced: the only visible symptom was `mobile`
+ * coming back empty, because every other field the row supplies has a fallback.
+ */
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+/**
+ * Separate client for password verification and refresh, so the session those
+ * calls establish cannot contaminate `admin`.
+ */
+const gotrue = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+
+/**
+ * Accounts registered without an email address carry a synthetic one so GoTrue
+ * has something unique to key on. It is not deliverable and not something the
+ * user ever typed, so it must never be shown back to them as their address.
+ */
+const NO_EMAIL_DOMAIN = '@no-email.masjid.invalid';
+const realEmail = (v: string | null | undefined): string =>
+  v && !v.toLowerCase().endsWith(NO_EMAIL_DOMAIN) ? v : '';
 
 interface Session {
   access_token: string;
@@ -56,11 +84,34 @@ async function sessionResponse(req: Request, session: Session, userId: string) {
 
   if (!tenantId) return json(req, { error: 'Account is not linked to a mosque' }, 403);
 
-  const { data: profile } = await admin
+  // A tenant can hold more than one admin_users row, which made maybeSingle()
+  // fail outright and blank the profile. The auth user's own username picks the
+  // right row; the oldest row is the fallback for tokens minted before the
+  // username claim existed.
+  const metaUsername = typeof meta.username === 'string' ? meta.username : '';
+  let query = admin
     .from('admin_users')
     .select('username, mobile, email, tenant_id')
-    .eq('tenant_id', tenantId)
-    .maybeSingle();
+    .eq('tenant_id', tenantId);
+  if (metaUsername) query = query.eq('username', metaUsername);
+
+  let { data: profile, error: profileError } = await query.maybeSingle();
+  // Swallowing this is what let a broken admin_users read look like an account
+  // with no mobile number on file: every other field the row supplies has a
+  // fallback, so nothing else changed when the query stopped returning rows.
+  if (profileError) console.error('[auth] admin_users lookup failed', profileError);
+
+  if (!profile && metaUsername) {
+    const { data: fallback, error: fbError } = await admin
+      .from('admin_users')
+      .select('username, mobile, email, tenant_id')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (fbError) console.error('[auth] admin_users fallback lookup failed', fbError);
+    profile = fallback;
+  }
 
   const { data: tenant } = await admin
     .from('tenants')
@@ -78,7 +129,7 @@ async function sessionResponse(req: Request, session: Session, userId: string) {
     tenantId,
     username: profile?.username ?? (typeof meta.username === 'string' ? meta.username : ''),
     mobile: profile?.mobile ?? '',
-    email: profile?.email ?? user?.user?.email ?? '',
+    email: realEmail(profile?.email) || realEmail(user?.user?.email),
     mosqueName: tenant?.name ?? 'Linked Mosque',
   });
 }
@@ -116,7 +167,7 @@ Deno.serve(async (req) => {
         return json(req, { error: 'Invalid username/mobile/email or password' }, 401);
       }
 
-      const { data, error } = await admin.auth.signInWithPassword({
+      const { data, error } = await gotrue.auth.signInWithPassword({
         email: email as string,
         password,
       });
@@ -154,7 +205,7 @@ Deno.serve(async (req) => {
       const row = (reg as { tenant_id: string }[] | null)?.[0];
       if (!row) return json(req, { error: 'Registration failed' }, 400);
 
-      const authEmail = (email ?? `${username}@no-email.masjid.invalid`).toLowerCase();
+      const authEmail = (email ?? `${username}${NO_EMAIL_DOMAIN}`).toLowerCase();
       const { data: created, error: createError } = await admin.auth.admin.createUser({
         email: authEmail,
         password,
@@ -170,7 +221,19 @@ Deno.serve(async (req) => {
         return json(req, { error: createError?.message ?? 'Could not create account' }, 400);
       }
 
-      const { data: signIn, error: signInError } = await admin.auth.signInWithPassword({
+      // 05_supabase_auth.sql mirrors admin_users into auth.users keyed on a
+      // shared id, and calls itself safe to re-run. GoTrue picks its own id for
+      // a new account, so without this the two drift apart and the next run of
+      // that script tries to insert a second auth.users row holding the same
+      // email. Nothing has a foreign key onto admin_users.id, so realigning it
+      // here is free.
+      const { error: idError } = await admin
+        .from('admin_users')
+        .update({ id: created.user.id })
+        .eq('tenant_id', row.tenant_id);
+      if (idError) console.warn('[auth] could not align admin_users.id', idError.message);
+
+      const { data: signIn, error: signInError } = await gotrue.auth.signInWithPassword({
         email: authEmail,
         password,
       });
@@ -184,7 +247,7 @@ Deno.serve(async (req) => {
       const refreshToken = str(body.refreshToken);
       if (!refreshToken) return json(req, { error: 'Missing refresh token' }, 400);
 
-      const { data, error } = await admin.auth.refreshSession({ refresh_token: refreshToken });
+      const { data, error } = await gotrue.auth.refreshSession({ refresh_token: refreshToken });
       if (error || !data?.session || !data.user)
         return json(req, { error: 'Session expired, please sign in again' }, 401);
 

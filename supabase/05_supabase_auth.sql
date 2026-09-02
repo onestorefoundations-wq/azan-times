@@ -59,6 +59,18 @@ SELECT
   coalesce(u.created_at, now()),
   now()
 FROM admin_users u
+-- Accounts registered through the `auth` Edge Function already have an
+-- auth.users row. It normally carries the same id (the function realigns it),
+-- but any account created before that realignment landed has a GoTrue-chosen
+-- id instead. Inserting those again would collide on auth.users' unique email
+-- rather than on the id, which ON CONFLICT (id) cannot absorb -- and the whole
+-- re-run would abort. They are already mirrored, so skip them.
+WHERE NOT EXISTS (
+  SELECT 1 FROM auth.users a
+   WHERE a.id <> u.id
+     AND a.email = lower(coalesce(nullif(u.email, ''),
+                                  u.username || '@no-email.masjid.invalid'))
+)
 ON CONFLICT (id) DO UPDATE
   SET email              = EXCLUDED.email,
       encrypted_password = EXCLUDED.encrypted_password,

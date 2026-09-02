@@ -10,7 +10,7 @@
  * the caller's JWT before deleting anything.
  */
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { supabase } from './supabaseClient';
+import { supabase, syncRealtimeAuth } from './supabaseClient';
 import { FUNCTIONS_URL, SUPABASE_ANON_KEY } from './supabaseConfig';
 import { AuthSession } from './authSession';
 import { MediaFile, mediaFileFromJson } from './mediaFile';
@@ -92,6 +92,11 @@ export const MediaLibraryService = {
   },
 
   subscribeToLibrary(tenantId: string, onUpdate: (files: MediaFile[]) => void): RealtimeChannel {
+    // Same reason as the config channel: an anon socket subscribes happily and
+    // then never matches a row, because media_library's policy is granted to
+    // `authenticated` only.
+    void syncRealtimeAuth();
+
     return supabase
       .channel(`media_library:${tenantId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'media_library', filter: `tenant_id=eq.${tenantId}` }, async () => {

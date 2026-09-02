@@ -28,3 +28,26 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     return AuthSession.getToken() ?? SUPABASE_ANON_KEY;
   },
 });
+
+/**
+ * Pushes the current session token onto the realtime socket.
+ *
+ * The `accessToken` hook above covers PostgREST and Functions, but it does not
+ * reach the websocket: without this the socket authenticates with the anon key,
+ * and since every policy on mosque_configs and media_library is granted to
+ * `authenticated` alone, the server accepts the subscription and then silently
+ * matches no rows. Channels report SUBSCRIBED and no event ever arrives.
+ *
+ * Call this before opening a channel, and again whenever the token is renewed
+ * -- an access token lasts about an hour, and a socket still holding the
+ * expired one goes quiet exactly the same way.
+ */
+export async function syncRealtimeAuth(): Promise<void> {
+  const token = AuthSession.getToken();
+  if (!token) return;
+  try {
+    await supabase.realtime.setAuth(token);
+  } catch (e) {
+    console.warn('[Supabase] realtime setAuth failed', e);
+  }
+}

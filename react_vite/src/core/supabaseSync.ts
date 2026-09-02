@@ -20,7 +20,7 @@ import {
   applyCloudSections,
   defaultSyncMeta,
 } from './appConfig';
-import { APP_VERSION, supabase } from './supabaseClient';
+import { APP_VERSION, supabase, syncRealtimeAuth } from './supabaseClient';
 import { AuthSession } from './authSession';
 import { DeviceService } from './deviceService';
 import { StorageService } from './storageService';
@@ -111,6 +111,11 @@ export const SupabaseSync = {
         onStatusChange?.('syncError');
         return;
       }
+
+      // Access tokens last about an hour. refreshIfNeeded may have just minted
+      // a new one, and a socket still holding the old token goes quiet without
+      // reporting anything, so re-arm it on every sync.
+      await syncRealtimeAuth();
 
       if (deviceId) {
         await supabase.from('device_registry').upsert(
@@ -242,7 +247,12 @@ export const SupabaseSync = {
       StorageService.saveConfig({
         ...newConfig,
         profile: { ...newConfig.profile, tenantId },
-        meta: updatedMeta,
+        // newConfig.meta is updatedMeta with the account's display_settings
+        // (font, colours, template, backgrounds) folded in. Overwriting it with
+        // updatedMeta dropped those while still recording the cloud's
+        // display_settings version, so the device believed it was in step and
+        // never pulled them again.
+        meta: newConfig.meta,
       });
       // Cloud state was just adopted wholesale; nothing local is outstanding.
       StorageService.saveSectionVersions((cfg.section_versions ?? {}) as SectionVersions);
@@ -385,6 +395,10 @@ function subscribeRealtime(tenantId: string) {
     channel = null;
   }
   activeTenantId = tenantId;
+
+  // Without this the socket carries the anon key and the server matches no
+  // rows, so the channel subscribes cleanly and then stays silent forever.
+  void syncRealtimeAuth();
 
   channel = supabase
     .channel(`mosque-config-${tenantId}`)

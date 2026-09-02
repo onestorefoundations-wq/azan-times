@@ -323,16 +323,13 @@ export interface SlideshowSettings {
 }
 
 /**
- * Bundled with the app rather than fetched, so it shows on a display that has
- * never been online. Lives in public/slides and is copied into the APK by the
- * Capacitor sync.
+ * There used to be a slide bundled with the app, shown until a mosque uploaded
+ * its own. It was one organisation's banner on every display that installed the
+ * app, which is not a default any mosque asked for, so it is gone -- along with
+ * the file it pointed at. Devices that saved it into their settings are cleaned
+ * up on load; see slideshowSettingsFromJson.
  */
-export const DEFAULT_SLIDE: SlideAsset = {
-  id: 'builtin_peace_radio_banner',
-  filename: 'peace-radio-banner.jpg',
-  localPath: '/slides/peace-radio-banner.jpg',
-  uploadedAt: 0,
-};
+const REMOVED_BUILTIN_SLIDE_ID = 'builtin_peace_radio_banner';
 
 export const defaultSlideshowSettings = (): SlideshowSettings => ({
   enabled: true,
@@ -346,9 +343,10 @@ export const defaultSlideshowSettings = (): SlideshowSettings => ({
   displayMode: 'full_screen',
   overlayCorner: 'top_right',
   overlaySizePercent: 25,
-  // Only the shared list: imagesForOrientation falls back to it for both
-  // orientations, so one entry covers landscape and portrait.
-  images: [DEFAULT_SLIDE],
+  // Empty: a new display shows prayer times only until the mosque uploads its
+  // own slides. slideshowEnabled() requires hasSlidesAvailable(), so `enabled`
+  // staying true costs nothing -- the slideshow phase is simply never entered.
+  images: [],
   landscapeImages: [],
   portraitImages: [],
 });
@@ -364,8 +362,18 @@ export const imagesForOrientation = (s: SlideshowSettings, isPortrait: boolean):
   return s.landscapeImages.length ? s.landscapeImages : s.images;
 };
 
+/**
+ * The removed built-in slide is dropped here rather than left in the list: every
+ * display installed before it was removed has it saved in its settings, and the
+ * file it points at no longer ships, so keeping it would put a broken image in
+ * the rotation on exactly the devices that never chose it.
+ */
 const parseAssets = (raw: unknown): SlideAsset[] =>
-  Array.isArray(raw) ? raw.map((e) => slideAssetFromJson(e as Json)) : [];
+  Array.isArray(raw)
+    ? raw
+        .map((e) => slideAssetFromJson(e as Json))
+        .filter((a) => a.id !== REMOVED_BUILTIN_SLIDE_ID)
+    : [];
 
 export const slideshowSettingsFromJson = (j: Json): SlideshowSettings => ({
   enabled: bool(j.enabled, false),

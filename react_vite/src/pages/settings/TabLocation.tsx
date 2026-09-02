@@ -4,6 +4,13 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MasjidProfile } from '../../core/appConfig';
 import {
+  PRAYER_CALENDARS,
+  asPrinted,
+  calendarCovers,
+  calendarRows,
+  findCalendar,
+} from '../../core/prayerCalendars';
+import {
   NumberField,
   OutlineButton,
   SettingsDropdown,
@@ -72,9 +79,24 @@ export default function TabLocation({
   const [note, setNote] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Place[]>([]);
+  const [showTable, setShowTable] = useState(false);
 
   const lat = profile.latitude;
   const lon = profile.longitude;
+
+  const usingCalendar = profile.timeSource === 'calendar';
+  const calendar = findCalendar(profile.calendarId) ?? PRAYER_CALENDARS[0];
+  const zone =
+    calendar.zones.find((z) => z.id === profile.calendarZone) ?? calendar.zones[0];
+  // A calendar covers only the dates transcribed from its printed sheet. Saying
+  // so up front -- and naming today specifically -- is the difference between a
+  // masjid noticing on setup day and noticing when the times silently change.
+  const coveredToday = usingCalendar && calendarCovers(calendar.id, zone.id, new Date());
+  const rows = usingCalendar && showTable ? calendarRows(calendar.id, zone.id) : [];
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+    today.getDate(),
+  ).padStart(2, '0')}`;
 
   const setLatLon = (la: number, lo: number) =>
     onChange({ ...profile, latitude: la, longitude: lo });
@@ -144,6 +166,147 @@ export default function TabLocation({
 
   return (
     <SettingsTabScaffold title="Location & Calculation">
+      <SettingsDropdown
+        label="Prayer Time Source"
+        value={profile.timeSource}
+        onChange={(v) =>
+          onChange({ ...profile, timeSource: v === 'calendar' ? 'calendar' : 'calculated' })
+        }
+        options={[
+          { value: 'calculated', label: 'Calculated from location (default)' },
+          { value: 'calendar', label: 'Printed calendar' },
+        ]}
+      />
+
+      {usingCalendar && (
+        <>
+          <SettingsDropdown
+            label="Calendar"
+            value={calendar.id}
+            onChange={(v) => {
+              const next = findCalendar(v) ?? calendar;
+              // Zones are per-calendar, so a stale zone id from the old calendar
+              // would silently fall back to its first zone every lookup. Reset it.
+              onChange({ ...profile, calendarId: next.id, calendarZone: next.zones[0].id });
+            }}
+            options={PRAYER_CALENDARS.map((c) => ({ value: c.id, label: c.label }))}
+          />
+
+          <SettingsDropdown
+            label="Calendar Region"
+            value={zone.id}
+            onChange={(v) => onChange({ ...profile, calendarZone: v })}
+            options={calendar.zones.map((z) => ({ value: z.id, label: z.label }))}
+          />
+
+          <div
+            style={{
+              color: coveredToday ? t.accentTeal : t.accentRed,
+              fontSize: 12,
+              lineHeight: 1.5,
+              marginBottom: 16,
+            }}
+          >
+            {coveredToday
+              ? `Adhan, sunrise and Iqamah all follow the printed sheet for ${zone.label}. This calendar covers ${calendar.coverage}; outside those dates the app goes back to calculating from the location below, so keep the coordinates correct. Per-prayer adhan offsets are ignored while a calendar is in use — the sheet is taken as printed. Iqamah is still the adhan plus each prayer's wait from Prayer Offsets.`
+              : `This calendar covers ${calendar.coverage}, which does not include today — the app is calculating from the location below until a covered date arrives. Keep the coordinates correct.`}
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <OutlineButton onClick={() => setShowTable((v) => !v)}>
+              {showTable ? '📋 Hide Calendar Times' : '📋 View Calendar Times'}
+            </OutlineButton>
+          </div>
+
+          {showTable && (
+            <div style={{ marginBottom: 16 }}>
+              {/*
+                These times were transcribed from a printed sheet by hand, so the
+                masjid should be able to check them against that sheet without
+                waiting for the day to arrive on screen. Shown in the sheet's own
+                12-hour form, whole month at once, so the two read side by side.
+              */}
+              <div style={{ color: t.textSecondary, fontSize: 12, lineHeight: 1.5, marginBottom: 8 }}>
+                {calendar.label} — {zone.label}, {calendar.coverage}. Compare against the printed
+                sheet; today's row is highlighted. Iqamah is not printed on the sheet and is added
+                from Prayer Offsets.
+              </div>
+
+              <div
+                style={{
+                  maxHeight: 340,
+                  overflow: 'auto',
+                  border: `1px solid ${t.borderSubtle}`,
+                  borderRadius: 8,
+                }}
+              >
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {['Date', 'Subh', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            position: 'sticky',
+                            top: 0,
+                            background: t.bgElevated,
+                            color: t.textSecondary,
+                            textAlign: h === 'Date' ? 'left' : 'right',
+                            fontWeight: 600,
+                            padding: '8px 10px',
+                            borderBottom: `1px solid ${t.borderSubtle}`,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(({ date, times }) => {
+                      const isToday = date === todayKey;
+                      const cell = {
+                        padding: '6px 10px',
+                        textAlign: 'right' as const,
+                        color: isToday ? t.accentTeal : t.textPrimary,
+                        fontVariantNumeric: 'tabular-nums' as const,
+                        whiteSpace: 'nowrap' as const,
+                      };
+                      return (
+                        <tr
+                          key={date}
+                          style={{
+                            background: isToday ? t.bgElevated : 'transparent',
+                            borderTop: `1px solid ${t.borderSubtle}`,
+                          }}
+                        >
+                          <td
+                            style={{
+                              ...cell,
+                              textAlign: 'left',
+                              fontWeight: isToday ? 700 : 400,
+                            }}
+                          >
+                            {date.slice(8)} {new Date(`${date}T00:00:00`).toLocaleDateString('en-GB', { month: 'short' })}
+                          </td>
+                          <td style={cell}>{asPrinted(times.fajr)}</td>
+                          <td style={cell}>{asPrinted(times.sunrise)}</td>
+                          <td style={cell}>{asPrinted(times.dhuhr)}</td>
+                          <td style={cell}>{asPrinted(times.asr)}</td>
+                          <td style={cell}>{asPrinted(times.maghrib)}</td>
+                          <td style={cell}>{asPrinted(times.isha)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <OutlineButton onClick={gpsBusy ? undefined : getLocation} style={{ color: t.accentTeal, borderColor: t.accentTeal }}>
           {gpsBusy ? 'Getting location…' : '📍 Get My Location'}

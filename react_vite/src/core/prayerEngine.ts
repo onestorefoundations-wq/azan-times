@@ -17,6 +17,7 @@ import {
 } from 'adhan';
 import { DateTime } from 'luxon';
 import { AppConfig } from './appConfig';
+import { lookupCalendarDay } from './prayerCalendars';
 
 export type PrayerState =
   | 'idle'
@@ -81,17 +82,56 @@ export function calculatePrayers(config: AppConfig, date?: Date): PrayerConfig[]
 
   // adhan-js uses the date's y/m/d to pick the day.
   const dayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const times = new PrayerTimes(coords, dayDate, params);
-
-  const adhanFor = (base: Date, offset: number) =>
-    toConfigTz(addMinutes(base, offset), profile.timezoneId);
   const iqamahFor = (adhan: Date, wait: number) => addMinutes(adhan, wait);
 
-  const fajrAdhan = adhanFor(times.fajr, adj.fajr.adhanOffset);
-  const dhuhrAdhan = adhanFor(times.dhuhr, adj.dhuhr.adhanOffset);
-  const asrAdhan = adhanFor(times.asr, adj.asr.adhanOffset);
-  const maghribAdhan = adhanFor(times.maghrib, adj.maghrib.adhanOffset);
-  const ishaAdhan = adhanFor(times.isha, adj.isha.adhanOffset);
+  /**
+   * A masjid on a printed calendar takes every adhan straight from the sheet.
+   * The per-prayer adhanOffset is deliberately *not* applied there: it exists to
+   * nudge a calculated time towards what the masjid actually calls, and the whole
+   * point of calendar mode is that the sheet is already that answer -- adding an
+   * offset on top would put the display out of step with the paper on the wall.
+   * iqamahWait still applies, since no calendar prints iqamah.
+   *
+   * Coverage is per-day, so a calendar that runs out mid-week simply resumes
+   * calculating from the next day rather than leaving the screen without times.
+   */
+  const printed =
+    profile.timeSource === 'calendar'
+      ? lookupCalendarDay(profile.calendarId, profile.calendarZone, dayDate)
+      : null;
+
+  let fajrAdhan: Date;
+  let sunriseTime: Date;
+  let dhuhrAdhan: Date;
+  let asrAdhan: Date;
+  let maghribAdhan: Date;
+  let ishaAdhan: Date;
+
+  if (printed) {
+    // Calendar times are already the masjid's wall clock, which is exactly what
+    // toConfigTz produces for the calculated path -- so build the same shape.
+    const at = (hhmm: string): Date => {
+      const [h, m] = hhmm.split(':').map((n) => parseInt(n, 10));
+      return new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), h, m || 0);
+    };
+    fajrAdhan = at(printed.fajr);
+    sunriseTime = at(printed.sunrise);
+    dhuhrAdhan = at(printed.dhuhr);
+    asrAdhan = at(printed.asr);
+    maghribAdhan = at(printed.maghrib);
+    ishaAdhan = at(printed.isha);
+  } else {
+    const times = new PrayerTimes(coords, dayDate, params);
+    const adhanFor = (base: Date, offset: number) =>
+      toConfigTz(addMinutes(base, offset), profile.timezoneId);
+
+    fajrAdhan = adhanFor(times.fajr, adj.fajr.adhanOffset);
+    sunriseTime = toConfigTz(times.sunrise, profile.timezoneId);
+    dhuhrAdhan = adhanFor(times.dhuhr, adj.dhuhr.adhanOffset);
+    asrAdhan = adhanFor(times.asr, adj.asr.adhanOffset);
+    maghribAdhan = adhanFor(times.maghrib, adj.maghrib.adhanOffset);
+    ishaAdhan = adhanFor(times.isha, adj.isha.adhanOffset);
+  }
 
   const prayers: PrayerConfig[] = [
     {
@@ -104,8 +144,8 @@ export function calculatePrayers(config: AppConfig, date?: Date): PrayerConfig[]
     {
       name: useArabic ? 'الشروق' : 'Sunrise',
       key: 'sunrise',
-      adhanTime: toConfigTz(times.sunrise, profile.timezoneId),
-      iqamahTime: toConfigTz(times.sunrise, profile.timezoneId),
+      adhanTime: sunriseTime,
+      iqamahTime: sunriseTime,
       noIqamah: true,
     },
     {

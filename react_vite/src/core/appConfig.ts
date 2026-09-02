@@ -34,6 +34,15 @@ export interface MasjidProfile {
   timezoneId: string;
   calculationMethod: string;
   asrJuristicMethod: string;
+  /**
+   * 'calculated' derives the times from the coordinates above; 'calendar' reads
+   * them off a printed timetable in core/prayerCalendars.ts instead. Calendars
+   * cover only the dates transcribed from a sheet, so a calendar masjid still
+   * needs its coordinates: dates outside the coverage fall back to calculating.
+   */
+  timeSource: 'calculated' | 'calendar';
+  calendarId: string;
+  calendarZone: string;
 }
 
 export const defaultMasjidProfile = (): MasjidProfile => ({
@@ -50,6 +59,9 @@ export const defaultMasjidProfile = (): MasjidProfile => ({
   timezoneId: 'Asia/Kolkata',
   calculationMethod: 'Karachi',
   asrJuristicMethod: 'Standard',
+  timeSource: 'calculated',
+  calendarId: 'kerala_salafi',
+  calendarZone: 'kozhikode',
 });
 
 export const masjidProfileFromJson = (j: Json): MasjidProfile => ({
@@ -61,6 +73,9 @@ export const masjidProfileFromJson = (j: Json): MasjidProfile => ({
   timezoneId: str(j.timezone_id, 'Asia/Kolkata'),
   calculationMethod: str(j.calculation_method, 'Karachi'),
   asrJuristicMethod: str(j.asr_juristic_method, 'Standard'),
+  timeSource: j.time_source === 'calendar' ? 'calendar' : 'calculated',
+  calendarId: str(j.calendar_id, 'kerala_salafi'),
+  calendarZone: str(j.calendar_zone, 'kozhikode'),
 });
 
 export const masjidProfileToJson = (p: MasjidProfile): Json => ({
@@ -72,6 +87,9 @@ export const masjidProfileToJson = (p: MasjidProfile): Json => ({
   timezone_id: p.timezoneId,
   calculation_method: p.calculationMethod,
   asr_juristic_method: p.asrJuristicMethod,
+  time_source: p.timeSource,
+  calendar_id: p.calendarId,
+  calendar_zone: p.calendarZone,
 });
 
 // ═══════════════════════════════════════════════════════════════

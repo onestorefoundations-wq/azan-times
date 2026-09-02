@@ -161,6 +161,16 @@ export default function TabSystemPrefs({
       />
 
       <SettingsDropdown
+        label="Audio Repeat Count"
+        value={String(f.audioRepeatCount ?? 1)}
+        onChange={(v) => onFeaturesChange({ ...f, audioRepeatCount: parseInt(v, 10) })}
+        options={[1, 2, 3, 4, 5].map((n) => ({
+          value: String(n),
+          label: n === 1 ? '1 time (default)' : `${n} times`,
+        }))}
+      />
+
+      <SettingsDropdown
         label="Adhan Alert Display Mode"
         value={f.adhanAlertMode}
         onChange={(v) => onFeaturesChange({ ...f, adhanAlertMode: v as FeaturesFormat['adhanAlertMode'] })}

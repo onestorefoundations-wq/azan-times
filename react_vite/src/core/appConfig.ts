@@ -140,6 +140,8 @@ export interface FeaturesFormat {
   adhanAlertMode: AdhanAlertMode;
   adhanAudio: string;
   iqamahAudio: string;
+  /** How many times the alert file plays through, 1-10. */
+  audioRepeatCount: number;
   showAnalogClock: boolean;
   analogClockSize: number;       // 50–200
   digitalClockSizePercent: number; // 40–120; scales the digital clock font
@@ -153,6 +155,7 @@ export const defaultFeaturesFormat = (): FeaturesFormat => ({
   adhanAlertMode: 'full_screen',
   adhanAudio: 'alert1.mp3',
   iqamahAudio: 'alert2.mp3',
+  audioRepeatCount: 1,
   showAnalogClock: true,
   analogClockSize: 55,
   digitalClockSizePercent: 75,
@@ -166,6 +169,7 @@ export const featuresFormatFromJson = (j: Json): FeaturesFormat => ({
   adhanAlertMode: str(j.adhan_alert_mode, 'full_screen'),
   adhanAudio: str(j.adhan_audio, 'alert1.mp3'),
   iqamahAudio: str(j.iqamah_audio, 'alert2.mp3'),
+  audioRepeatCount: Math.max(1, Math.min(10, int(j.audio_repeat_count, 1))),
   showAnalogClock: bool(j.show_analog_clock, true),
   analogClockSize: int(j.analog_clock_size, 55),
   digitalClockSizePercent: int(j.digital_clock_size_percent, 75),
@@ -179,6 +183,7 @@ export const featuresFormatToJson = (f: FeaturesFormat): Json => ({
   adhan_alert_mode: f.adhanAlertMode,
   adhan_audio: f.adhanAudio,
   iqamah_audio: f.iqamahAudio,
+  audio_repeat_count: f.audioRepeatCount,
   show_analog_clock: f.showAnalogClock,
   analog_clock_size: f.analogClockSize,
   digital_clock_size_percent: f.digitalClockSizePercent,

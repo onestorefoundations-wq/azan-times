@@ -91,6 +91,9 @@ let slideshowTimer: ReturnType<typeof setTimeout> | null = null;
 let lastAlertedAdhan: string | null = null;
 let lastAlertedIqamah: string | null = null;
 let alertTimeout: number | null = null; // epoch ms
+// Identifies the alert currently on screen, so a late audio-finished callback
+// from the adhan cannot dismiss the iqamah alert that replaced it.
+let alertGeneration = 0;
 let inSlideshowPhase = false;
 let mediaChannel: RealtimeChannel | null = null;
 let mediaPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -213,6 +216,20 @@ export const useAppStore = create<AppState>((set, get) => {
     get().config.slideshow.enabled &&
     hasSlidesAvailable(get());
 
+  /**
+   * Clears the alert overlay raised as [generation], if it is still the one
+   * showing. Called when the alert audio finishes so the screen returns to the
+   * times as soon as the adhan ends, rather than sitting on the overlay for the
+   * full fallback timeout.
+   */
+  const endAlert = (generation: number): void => {
+    if (generation !== alertGeneration) return;
+    alertTimeout = null;
+    const ds = get().displayState;
+    if (ds !== 'adhanAlert' && ds !== 'iqamahAlert') return;
+    set({ displayState: inSlideshowPhase && slideshowEnabled() ? 'slideshow' : 'normal' });
+  };
+
   const isAlertActive = (): boolean =>
     alertTimeout != null ||
     get().displayState === 'adhanAlert' ||
@@ -270,9 +287,15 @@ export const useAppStore = create<AppState>((set, get) => {
 
     let displayState = get().displayState;
 
+    // The timeouts below are a fallback for a screen whose audio is off or
+    // still blocked by the autoplay policy: when the file does play, endAlert
+    // clears the overlay the moment the last repeat finishes.
+    const repeats = config.features.audioRepeatCount;
+
     if (state === 'adhanTime' && prayer && lastAlertedAdhan !== prayer.key) {
       lastAlertedAdhan = prayer.key;
-      void AudioService.playAlert(config.features.adhanAudio);
+      const generation = ++alertGeneration;
+      void AudioService.playAlert(config.features.adhanAudio, repeats, () => endAlert(generation));
       if (displayState !== 'adhanAlert') {
         displayState = 'adhanAlert';
         alertTimeout = Date.now() + 5 * 60_000;
@@ -280,7 +303,8 @@ export const useAppStore = create<AppState>((set, get) => {
     }
     if (state === 'iqamahCountdown' && prayer && lastAlertedIqamah !== prayer.key) {
       lastAlertedIqamah = prayer.key;
-      void AudioService.playAlert(config.features.iqamahAudio);
+      const generation = ++alertGeneration;
+      void AudioService.playAlert(config.features.iqamahAudio, repeats, () => endAlert(generation));
       if (displayState !== 'iqamahAlert') {
         displayState = 'iqamahAlert';
         alertTimeout = Date.now() + 2 * 60_000;
@@ -581,6 +605,8 @@ export const useAppStore = create<AppState>((set, get) => {
 
     dismissAlert() {
       alertTimeout = null;
+      alertGeneration += 1; // a manual dismiss outranks any pending audio callback
+      AudioService.stop();
       const ds = get().displayState;
       if (ds === 'adhanAlert' || ds === 'iqamahAlert') {
         set({ displayState: inSlideshowPhase && slideshowEnabled() ? 'slideshow' : 'normal' });

@@ -33,7 +33,26 @@ import { json, preflight } from '../_shared/cors.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
+/**
+ * Service-role client. Used for the admin API and for every table read, and
+ * deliberately never used to sign anybody in: signInWithPassword stores the
+ * resulting user session on the client it was called on, and supabase-js then
+ * sends that user's access token on subsequent PostgREST requests instead of
+ * the service key. The role silently drops from `service_role` to
+ * `authenticated`, which is revoked on admin_users -- so the profile read
+ * started returning 403 while the tenants read beside it still succeeded under
+ * its own RLS policy. Nothing surfaced: the only visible symptom was `mobile`
+ * coming back empty, because every other field the row supplies has a fallback.
+ */
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+/**
+ * Separate client for password verification and refresh, so the session those
+ * calls establish cannot contaminate `admin`.
+ */
+const gotrue = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
@@ -76,16 +95,21 @@ async function sessionResponse(req: Request, session: Session, userId: string) {
     .eq('tenant_id', tenantId);
   if (metaUsername) query = query.eq('username', metaUsername);
 
-  let { data: profile } = await query.maybeSingle();
+  let { data: profile, error: profileError } = await query.maybeSingle();
+  // Swallowing this is what let a broken admin_users read look like an account
+  // with no mobile number on file: every other field the row supplies has a
+  // fallback, so nothing else changed when the query stopped returning rows.
+  if (profileError) console.error('[auth] admin_users lookup failed', profileError);
 
   if (!profile && metaUsername) {
-    const { data: fallback } = await admin
+    const { data: fallback, error: fbError } = await admin
       .from('admin_users')
       .select('username, mobile, email, tenant_id')
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
+    if (fbError) console.error('[auth] admin_users fallback lookup failed', fbError);
     profile = fallback;
   }
 
@@ -143,7 +167,7 @@ Deno.serve(async (req) => {
         return json(req, { error: 'Invalid username/mobile/email or password' }, 401);
       }
 
-      const { data, error } = await admin.auth.signInWithPassword({
+      const { data, error } = await gotrue.auth.signInWithPassword({
         email: email as string,
         password,
       });
@@ -209,7 +233,7 @@ Deno.serve(async (req) => {
         .eq('tenant_id', row.tenant_id);
       if (idError) console.warn('[auth] could not align admin_users.id', idError.message);
 
-      const { data: signIn, error: signInError } = await admin.auth.signInWithPassword({
+      const { data: signIn, error: signInError } = await gotrue.auth.signInWithPassword({
         email: authEmail,
         password,
       });
@@ -223,7 +247,7 @@ Deno.serve(async (req) => {
       const refreshToken = str(body.refreshToken);
       if (!refreshToken) return json(req, { error: 'Missing refresh token' }, 400);
 
-      const { data, error } = await admin.auth.refreshSession({ refresh_token: refreshToken });
+      const { data, error } = await gotrue.auth.refreshSession({ refresh_token: refreshToken });
       if (error || !data?.session || !data.user)
         return json(req, { error: 'Session expired, please sign in again' }, 401);
 

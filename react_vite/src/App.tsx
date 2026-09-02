@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { useAppStore } from './store/appStore';
 import { isRtl } from './i18n';
@@ -94,50 +94,30 @@ function ForcedOrientation({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * One-time "tap to enable sound" hint (browsers block autoplay until a gesture).
+ * Silently unlocks audio on the first gesture of the session.
+ *
+ * Browsers block autoplay until a user gesture, so the adhan cannot sound until
+ * something is tapped or pressed. There used to be a "tap to enable sound"
+ * badge saying so; it earned its place on nobody's screen -- a kiosk on a wall
+ * is never tapped, so the hint simply sat there forever, and audio alerts are
+ * on by default anyway (Settings > Features turns them off). The listener stays
+ * so that any interaction -- the settings tap, a key press, a remote button --
+ * unlocks playback without asking.
  *
  * The Android shell sets mediaPlaybackRequiresUserGesture=false, so there is
- * nothing to unlock there -- and a kiosk on a wall would show the hint forever,
- * because nobody is ever going to tap it.
+ * nothing to unlock there.
  */
-function AudioUnlockHint() {
-  const enabled = useAppStore((s) => s.config.features.audioAlertsEnabled);
-  const [unlocked, setUnlocked] = useState(isNative());
-
+function useAudioUnlock(): void {
   useEffect(() => {
-    if (!enabled || unlocked) return;
-    const onGesture = () => {
-      AudioService.unlock();
-      setUnlocked(true);
-    };
+    if (isNative()) return;
+    const onGesture = () => AudioService.unlock();
     window.addEventListener('pointerdown', onGesture, { once: true });
     window.addEventListener('keydown', onGesture, { once: true });
     return () => {
       window.removeEventListener('pointerdown', onGesture);
       window.removeEventListener('keydown', onGesture);
     };
-  }, [enabled, unlocked]);
-
-  if (!enabled || unlocked) return null;
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        bottom: 12,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 50,
-        padding: '6px 14px',
-        borderRadius: 999,
-        background: 'rgba(30,41,59,0.9)',
-        color: '#94A3B8',
-        fontSize: 12,
-        pointerEvents: 'none',
-      }}
-    >
-      🔇 Tap anywhere to enable adhan sound
-    </div>
-  );
+  }, []);
 }
 
 export default function App() {
@@ -147,6 +127,7 @@ export default function App() {
   }, []);
 
   useDocumentLocale();
+  useAudioUnlock();
   useAppUpdate(); // auto-reload when a new build is deployed
 
   return (
@@ -158,7 +139,6 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </Suspense>
-        <AudioUnlockHint />
       </ForcedOrientation>
     </BrowserRouter>
   );

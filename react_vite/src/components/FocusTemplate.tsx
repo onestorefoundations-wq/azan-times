@@ -9,11 +9,19 @@
  * Here the clock and the next prayer are always on screen, and only the upper
  * panel changes.
  *
- * Panes rotate in order: next prayer -> quotes -> slideshow images. Panes with
- * no content are skipped rather than rendered empty, so a mosque that has added
- * neither quotes nor images simply gets a static next-prayer card.
+ * Panes rotate in order: full prayer table -> next prayer -> quotes, and the
+ * slideshow takes the panel over for the whole of its phase, laid out by the
+ * admin's slideshow display mode: full_screen fills the panel, split_screen
+ * halves it with the rotating content, corner_overlay floats a small pane over
+ * the content in the configured corner. A pane with no content is skipped
+ * rather than rendered empty, so a mosque that has added no quotes simply
+ * alternates the table with the next-prayer card.
+ *
+ * The table pane is portrait-only: in landscape the pinned bar already carries
+ * every prayer as a column, so repeating it above would say the same thing
+ * twice on one screen.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { CSSProperties, JSX, useEffect, useMemo, useState } from 'react';
 import { AppConfig, QuoteEntry, resolvedColors, SlideAsset } from '../core/appConfig';
 import { hexA } from '../core/color';
 import { formatTime, getHijriDate, PrayerConfig } from '../core/prayerEngine';
@@ -33,7 +41,7 @@ interface Props {
   isSlideshowActive: boolean;
 }
 
-type PaneKind = 'next' | 'quote' | 'slides';
+type PaneKind = 'list' | 'next' | 'quote';
 
 /**
  * Type scale unit for a panel.
@@ -69,15 +77,22 @@ export default function FocusTemplate(props: Props) {
 
   const quotes = config.quotes.enabled ? config.quotes.entries.filter((q) => q.text.trim()) : [];
   const showSlides = isSlideshowActive && slides.length > 0;
+  const slideMode = config.slideshow.displayMode;
 
   // Rebuilt only when the available content changes, so the rotation timer in
   // usePaneRotation is not reset on every render.
+  //
+  // The slideshow phase is not a turn in the rotation: the store already decides
+  // how long slides run, and cutting away mid-phase would unmount
+  // SlideshowPanel and restart the album from its first image every time the
+  // rotation came back round. Only full_screen suppresses the content rotation
+  // outright -- the other two modes keep it running beside or beneath the
+  // slides.
   const panes = useMemo<PaneKind[]>(() => {
-    const list: PaneKind[] = ['next'];
+    const list: PaneKind[] = isPortrait ? ['list', 'next'] : ['next'];
     if (quotes.length > 0) list.push('quote');
-    if (showSlides) list.push('slides');
     return list;
-  }, [quotes.length, showSlides]);
+  }, [isPortrait, quotes.length]);
 
   const paneSeconds = clamp(config.quotes.rotationSeconds, 5, 600);
   const pane = usePaneRotation(panes, paneSeconds);
@@ -88,25 +103,78 @@ export default function FocusTemplate(props: Props) {
 
   const gutter = clamp(Math.min(width, height) * 0.03, 10, 28);
 
+  const content = (
+    <>
+      {pane === 'list' && (
+        <PrayerListPane
+          config={config}
+          prayers={prayers}
+          nextPrayer={nextPrayer}
+          activePrayer={activePrayer}
+        />
+      )}
+      {pane === 'next' && (
+        <NextPrayerPane config={config} nextPrayer={nextPrayer} activePrayer={activePrayer} />
+      )}
+      {pane === 'quote' && <QuotePane config={config} quotes={quotes} seconds={paneSeconds} />}
+    </>
+  );
+
+  const slideshow = (
+    <div className="h-full w-full overflow-hidden" style={{ borderRadius: gutter }}>
+      <SlideshowPanel assets={slides} durationSeconds={config.slideshow.durationPerImageSeconds} />
+    </div>
+  );
+
+  // The overlay is sized off the panel's own width, not the screen's, so the
+  // admin's percentage means the same thing here as it does on the classic
+  // template.
+  const overlayWidth = clamp((width * config.slideshow.overlaySizePercent) / 100, 90, width - gutter * 2);
+  const corner = config.slideshow.overlayCorner;
+  const overlayStyle: CSSProperties = {
+    position: 'absolute',
+    top: corner.startsWith('top') ? gutter : undefined,
+    bottom: corner.startsWith('bottom') ? gutter : undefined,
+    left: corner.endsWith('left') ? gutter : undefined,
+    right: corner.endsWith('right') ? gutter : undefined,
+    width: overlayWidth,
+    height: (overlayWidth * 9) / 16,
+  };
+
+  let panel: JSX.Element;
+  if (showSlides && slideMode === 'full_screen') {
+    panel = (
+      <div className="absolute inset-0" style={{ padding: gutter }}>
+        {slideshow}
+      </div>
+    );
+  } else if (showSlides && slideMode === 'split_screen') {
+    // Portrait stacks (slides above, times below); landscape sits them side by
+    // side, which is the only split that leaves either half a usable shape.
+    panel = (
+      <div
+        className={'flex h-full w-full ' + (isPortrait ? 'flex-col' : 'flex-row')}
+        style={{ padding: gutter, gap: gutter }}
+      >
+        <div className="min-h-0 min-w-0 flex-1">{slideshow}</div>
+        <div className="relative min-h-0 min-w-0 flex-1">{content}</div>
+      </div>
+    );
+  } else if (showSlides && slideMode === 'corner_overlay') {
+    panel = (
+      <>
+        {content}
+        <div style={overlayStyle}>{slideshow}</div>
+      </>
+    );
+  } else {
+    panel = content;
+  }
+
   return (
     <div ref={ref} className="flex h-full w-full flex-col" style={{ background: 'var(--bg)' }}>
       {/* Rotating panel. min-h-0 lets it shrink instead of pushing the bar off screen. */}
-      <div className="relative min-h-0 flex-1">
-        {pane === 'next' && (
-          <NextPrayerPane config={config} nextPrayer={nextPrayer} activePrayer={activePrayer} />
-        )}
-        {pane === 'quote' && <QuotePane config={config} quotes={quotes} seconds={paneSeconds} />}
-        {pane === 'slides' && (
-          <div className="absolute inset-0" style={{ padding: gutter }}>
-            <div className="h-full w-full overflow-hidden" style={{ borderRadius: gutter }}>
-              <SlideshowPanel
-                assets={slides}
-                durationSeconds={config.slideshow.durationPerImageSeconds}
-              />
-            </div>
-          </div>
-        )}
-      </div>
+      <div className="relative min-h-0 flex-1">{panel}</div>
 
       {/* Pinned summary bar -- never rotates, never scrolls away. */}
       <div style={{ padding: '0 ' + gutter + 'px ' + gutter + 'px', flex: '0 0 auto' }}>
@@ -160,6 +228,171 @@ function usePaneRotation(panes: PaneKind[], seconds: number): PaneKind {
 }
 
 // ── Panes ─────────────────────────────────────────────────────
+
+/**
+ * Every prayer of the day as a stack of rounded rows: name, adhan, iqamah.
+ *
+ * The current prayer's row is inverted -- accent fill, surface-coloured text --
+ * rather than merely tinted, so it is the one row readable from the back of the
+ * hall. Rows share the vertical space equally and the type scale is derived
+ * from the row height, so seven rows on a phone and six on a tall TV both fill
+ * the pane without clipping.
+ */
+function PrayerListPane({
+  config,
+  prayers,
+  nextPrayer,
+  activePrayer,
+}: {
+  config: AppConfig;
+  prayers: PrayerConfig[];
+  nextPrayer: PrayerConfig | null;
+  activePrayer: PrayerConfig | null;
+}) {
+  const [ref, { width, height }] = useElementSize<HTMLDivElement>();
+  const colors = resolvedColors(config.meta);
+  const s = getStrings(config.features.displayLanguage);
+  const use24 = config.features.use24HourFormat;
+
+  const pad = clamp(Math.min(width, height) * 0.035, 10, 32);
+  // The header takes roughly one row's worth of height; the rest is split
+  // evenly between the prayers.
+  const rowH = height > 0 ? (height - pad * 2) / (prayers.length + 1.15) : 56;
+  const gap = clamp(rowH * 0.14, 4, 16);
+  const radius = clamp(rowH * 0.28, 10, 26);
+  const nameFont = clamp(rowH * 0.42, 12, 46);
+  const timeFont = clamp(rowH * 0.5, 14, 58);
+  const titleFont = clamp(rowH * 0.44, 13, 48);
+  const labelFont = clamp(rowH * 0.24, 9, 24);
+
+  return (
+    <div
+      ref={ref}
+      className="flex h-full w-full flex-col overflow-hidden"
+      style={{ padding: pad, gap }}
+    >
+      {/* Masjid identity doubles as the column header strip: the two time
+          columns are labelled once, above the rows they belong to. */}
+      <div className="flex items-start" style={{ padding: '0 ' + pad * 0.6 + 'px' }}>
+        <div className="min-w-0 flex-[3]">
+          <div
+            style={{
+              fontSize: titleFont,
+              fontWeight: 900,
+              lineHeight: 1.05,
+              letterSpacing: '0.01em',
+              color: colors.primary,
+              overflow: 'hidden',
+              display: '-webkit-box',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: 2,
+            }}
+          >
+            {config.profile.name.toUpperCase()}
+          </div>
+          {config.profile.nameArabic?.trim() && (
+            <div
+              style={{
+                marginTop: labelFont * 0.25,
+                fontSize: labelFont,
+                fontWeight: 600,
+                letterSpacing: '0.08em',
+                color: hexA(colors.primary, 0.7),
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {config.profile.nameArabic}
+            </div>
+          )}
+        </div>
+        <ColumnLabel text={s.headerAdhan.toUpperCase()} font={labelFont} color={colors.primary} />
+        <ColumnLabel text={s.headerIqamah.toUpperCase()} font={labelFont} color={colors.primary} />
+      </div>
+
+      {prayers.map((p) => {
+        const highlighted = activePrayer?.key === p.key || nextPrayer?.key === p.key;
+        const fg = highlighted ? 'var(--surface)' : colors.primary;
+        return (
+          <div
+            key={p.key}
+            className="flex min-h-0 flex-1 items-center transition-colors duration-300"
+            style={{
+              background: highlighted ? 'var(--accent)' : hexA(colors.primary, 0.16),
+              borderRadius: radius,
+              padding: '0 ' + pad * 0.6 + 'px',
+              boxShadow: highlighted ? '0 6px 20px ' + hexA('#000000', 0.22) : 'none',
+            }}
+          >
+            <div
+              className="min-w-0 flex-[3]"
+              style={{
+                fontSize: nameFont,
+                fontWeight: 800,
+                letterSpacing: '0.02em',
+                color: fg,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {localizedPrayerName(
+                s,
+                p.key,
+                p.name,
+                config.features.useArabicLabels,
+                config.features.displayLanguage,
+              ).toUpperCase()}
+            </div>
+            <TimeCell text={shortTime(p.adhanTime, use24)} font={timeFont} color={fg} />
+            {p.noIqamah ? (
+              // A dash rather than a blank keeps the column aligned and says
+              // explicitly that Shuruq has no congregation.
+              <TimeCell text="--" font={timeFont * 0.6} color={hexA(colors.primary, 0.45)} />
+            ) : (
+              <TimeCell text={shortTime(p.iqamahTime, use24)} font={timeFont} color={fg} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ColumnLabel({ text, font, color }: { text: string; font: number; color: string }) {
+  return (
+    <div
+      className="flex-[2] text-center"
+      style={{
+        fontSize: font,
+        fontWeight: 800,
+        letterSpacing: '0.16em',
+        color: hexA(color, 0.85),
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function TimeCell({ text, font, color }: { text: string; font: number; color: string }) {
+  return (
+    <div
+      className="flex-[2] text-center"
+      style={{
+        fontSize: font,
+        fontWeight: 900,
+        lineHeight: 1,
+        color,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {text}
+    </div>
+  );
+}
 
 function NextPrayerPane({
   config,

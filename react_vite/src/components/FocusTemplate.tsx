@@ -260,10 +260,24 @@ function PrayerListPane({
   const rowH = height > 0 ? (height - pad * 2) / (prayers.length + 1.15) : 56;
   const gap = clamp(rowH * 0.14, 4, 16);
   const radius = clamp(rowH * 0.28, 10, 26);
-  const nameFont = clamp(rowH * 0.42, 12, 46);
-  const timeFont = clamp(rowH * 0.5, 14, 58);
+
+  // Height alone is not enough to size the type. A row is name(3) + adhan(2) +
+  // iqamah(2) across, so on a phone -- tall rows, narrow columns -- a font
+  // picked to fill the row's height overflows its column's width, and since the
+  // time cells cannot shrink below their own text the two columns run into each
+  // other ("5:055:30"). Bound every scale by the width its column actually has.
+  const contentW = width > 0 ? Math.max(width - pad * 3.2, 0) : 0;
+  const colW = (units: number) => (contentW * units) / 7;
+  // Rough advance width of a heavy sans, in em: digits and colons run narrow,
+  // capitals wider, and the column labels carry 0.16em of tracking on top. The
+  // 0.92 keeps a little slack -- the real face is not the one measured here.
+  const fits = (px: number, chars: number, em: number) =>
+    px > 0 ? (px * 0.92) / (chars * em) : Infinity;
+
+  const nameFont = clamp(Math.min(rowH * 0.42, fits(colW(3), 8, 0.72)), 12, 46);
+  const timeFont = clamp(Math.min(rowH * 0.5, fits(colW(2), 5, 0.62)), 14, 58);
   const titleFont = clamp(rowH * 0.44, 13, 48);
-  const labelFont = clamp(rowH * 0.24, 9, 24);
+  const labelFont = clamp(Math.min(rowH * 0.24, fits(colW(2), 6, 0.88)), 9, 24);
 
   return (
     <div
@@ -362,8 +376,11 @@ function PrayerListPane({
 
 function ColumnLabel({ text, font, color }: { text: string; font: number; color: string }) {
   return (
+    // min-w-0: a flex item defaults to min-width:auto, which for nowrap text is
+    // the width of the text -- the column would push its neighbour aside rather
+    // than give, so a font a shade too large collides instead of clipping.
     <div
-      className="flex-[2] text-center"
+      className="min-w-0 flex-[2] overflow-hidden text-center"
       style={{
         fontSize: font,
         fontWeight: 800,
@@ -379,8 +396,10 @@ function ColumnLabel({ text, font, color }: { text: string; font: number; color:
 
 function TimeCell({ text, font, color }: { text: string; font: number; color: string }) {
   return (
+    // min-w-0 for the same reason as ColumnLabel: without it the adhan and
+    // iqamah cells overflow into one another and the two times read as one.
     <div
-      className="flex-[2] text-center"
+      className="min-w-0 flex-[2] overflow-hidden text-center"
       style={{
         fontSize: font,
         fontWeight: 900,

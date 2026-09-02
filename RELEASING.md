@@ -22,7 +22,13 @@ JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 ```
 
 The Android SDK location comes from `capacitor_app/android/local.properties`
-(`sdk.dir`), which is machine-local and not in git.
+(`sdk.dir`), which is machine-local and not in git. On the current build machine
+that is `C:/DATA/Android/Sdk`, so the tools below live under
+`C:/DATA/Android/Sdk/build-tools/37.0.0/`.
+
+`npm run apk:debug` and `apk:release` invoke `.\gradlew.bat` — the `.\` matters,
+because Windows sets `NoDefaultCurrentDirectoryInExePath=1` here and cmd will
+not otherwise find an executable in the working directory.
 
 ## One time: signing
 
@@ -40,17 +46,28 @@ passwords. There is no recovery.
 Do not put the keystore or the passwords in this repo, in an issue, or in a chat
 message.
 
-To sign the Capacitor build with it, copy the example and fill in the two
-passwords:
+This is **already configured on the current build machine** —
+`capacitor_app/android/keystore.properties` exists and `apk:release` produces a
+signed APK. The rest of this section is for setting it up somewhere else, or
+after a reinstall.
+
+`flutter_app/android/key.properties` uses the same four property names as
+`keystore.properties.example`, so the file can be copied wholesale rather than
+retyping the passwords anywhere:
 
 ```bash
-cd capacitor_app/android
-cp keystore.properties.example keystore.properties
+cp flutter_app/android/key.properties capacitor_app/android/keystore.properties
+# then edit only the storeFile line to an absolute path:
+# storeFile=C:/DATA_02/masjid-azan-times/flutter_app/android/masjid-release.jks
 ```
 
-The example already points `storeFile` at the existing key. Reuse it only if
-this shell is meant to replace the Flutter app's identity — it is, since both
-build `com.pro26.masjid_display`.
+Use an absolute path. The example's `../../flutter_app/...` is relative to the
+wrong directory: `file()` inside `app/build.gradle` resolves against the app
+module, not the android root, so it lands a level short and the build silently
+falls back to producing `app-release-unsigned.apk`.
+
+Reuse this key only if the Capacitor shell is meant to carry the Flutter app's
+identity — it is, since both build `com.pro26.masjid_display`.
 
 ### The current field state
 
@@ -75,9 +92,11 @@ Bump the version first. `versionCode` and `versionName` live in
 `capacitor_app/android/app/build.gradle`:
 
 ```gradle
-versionCode 3
-versionName "1.0.2"
+versionCode 8
+versionName "1.0.7"
 ```
+
+(v1.0.6 shipped as `versionCode 7`.)
 
 Android refuses to install an APK whose `versionCode` is not higher than the
 installed one, and the failure is a bare "App not installed" with no
@@ -108,8 +127,25 @@ Confirm it is signed with the real key, not the debug key:
 "$ANDROID_HOME/build-tools/37.0.0/apksigner.bat" verify --print-certs app-release.apk
 ```
 
-The certificate DN should be what you entered at `keytool -genkey` time, **not**
-`CN=Android Debug`.
+Expected, and **not** `CN=Android Debug`:
+
+```
+CN=Masjid App by Pro26, OU=Masjid Azan Times, O=Pro26, C=IN
+SHA-256: f887e536b93764b5ff2f240f4aa54d4b4e8af7b35deb9291e8666eddf2b149f4
+```
+
+If that digest ever changes, stop: it means the build picked up a different
+key, and shipping it would lock every existing install out of updates.
+
+Then confirm the fix you are shipping is actually in the APK, **in both the
+modern and the legacy chunk**. The TV boxes run the legacy ES5 bundle, so
+something present in only one of the two works on your phone and silently does
+not on the display it was written for:
+
+```bash
+unzip -l app-release.apk | grep -c "assets/public/assets/.*legacy.*\.js"   # expect 7
+unzip -p app-release.apk "assets/public/assets/<chunk>-*.js" | grep <something distinctive>
+```
 
 Then confirm the Android TV metadata survived:
 
@@ -149,7 +185,30 @@ curl -s https://api.github.com/repos/onestorefoundations-wq/azan-times/releases/
 ```
 
 `tag_name` becomes the version shown under the download button, and the first
-`.apk` asset supplies the link and the size in MB.
+`.apk` asset supplies the link and the size in MB. **The same call is what the
+app's own update check reads** (`useApkUpdate`), so a release with no `.apk`
+asset, or a tag that is not `v<dotted version>`, silently fails to reach both
+the landing page and every installed display.
+
+Finally, verify the artifact that is actually published rather than the one on
+your disk — a truncated or wrong upload looks fine locally:
+
+```bash
+gh release download v1.0.6 -R onestorefoundations-wq/azan-times -p "*.apk" -O dl.apk
+sha256sum dl.apk app-release.apk     # the two must match
+```
+
+### What publishing now does on its own
+
+Since v1.0.6 the app checks GitHub for a newer release every few hours and
+offers the download from Settings → App. Publishing is therefore how installed
+displays find out; nothing else has to be done to notify them.
+
+Two limits worth remembering. A display only checks if it is running a build
+that contains the checker, so anything on v1.0.5 or earlier needs one manual
+sideload before it will ever self-announce. And the app can only *offer* the
+download — installing is a human tapping the file, because automating it needs
+`REQUEST_INSTALL_PACKAGES`, a far larger permission than this app should hold.
 
 ## Cheap TV boxes
 

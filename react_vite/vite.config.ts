@@ -8,11 +8,36 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 // Stamped once per build — used by useAppUpdate to detect new deployments.
 const BUILD_TIME = new Date().toISOString();
 
+/**
+ * The Android versionName, for the native build only.
+ *
+ * The APK cannot use the web update check: /version.json resolves inside the
+ * APK's own assets, so it always matches, and reloading could not replace
+ * bundled files anyway. It compares itself against the latest GitHub release
+ * instead, which needs its own version to compare with. Read from build.gradle
+ * rather than duplicated here, so bumping the release in one place is enough.
+ * Null in a web build, which is how the app tells which one it is.
+ */
+function nativeVersionName(): string | null {
+  if (!process.env.VITE_NATIVE) return null;
+  try {
+    const gradle = readFileSync(
+      path.resolve(__dirname, '../capacitor_app/android/app/build.gradle'),
+      'utf8',
+    );
+    return /versionName\s+"([^"]+)"/.exec(gradle)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   define: {
     // Replaced at build time; useAppUpdate compares this to /version.json
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),
+    // The APK's own versionName, or null in a web build.
+    __NATIVE_VERSION__: JSON.stringify(nativeVersionName()),
   },
   resolve: {
     alias: {

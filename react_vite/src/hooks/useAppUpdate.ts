@@ -58,6 +58,14 @@ async function checkVersion() {
 
 export function useAppUpdate() {
   useEffect(() => {
+    // Neither mechanism can work inside the APK, and both look like they do.
+    // There is no service worker to change controller (main.tsx skips
+    // registration on native), and /version.json resolves to the copy packaged
+    // in the APK, so it always equals __BUILD_TIME__ -- the poll would read a
+    // local file every 10 minutes forever. useApkUpdate handles the APK by
+    // comparing against the latest GitHub release instead.
+    if (__NATIVE_VERSION__) return;
+
     // ── 1. SW controller change ──────────────────────────────
     const sw = navigator.serviceWorker;
     const onControllerChange = () => {

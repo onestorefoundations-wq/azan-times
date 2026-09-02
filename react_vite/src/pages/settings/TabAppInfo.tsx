@@ -3,6 +3,7 @@
  * PWA & App management tab: install/uninstall, version info, manual update check.
  */
 import { useEffect, useRef, useState } from 'react';
+import { ApkUpdate, useApkUpdate } from '../../hooks/useApkUpdate';
 import {
   PrimaryButton,
   SettingsSectionHeader,
@@ -10,7 +11,6 @@ import {
   useTheme,
 } from './helpers';
 
-declare const __BUILD_TIME__: string;
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -38,6 +38,77 @@ async function clearAllCaches() {
 }
 
 // ── Row components ───────────────────────────────────────────────
+
+/**
+ * The Android build's update panel. It can only point at the download -- an APK
+ * cannot replace itself without REQUEST_INSTALL_PACKAGES, which is far more
+ * permission than a prayer display should ask for -- so the job here is to make
+ * sure a wall-mounted TV is not quietly years behind.
+ */
+function ApkUpdateBlock({ apk, isOnline }: { apk: ApkUpdate; isOnline: boolean }) {
+  const t = useTheme();
+
+  const note: Record<ApkUpdate['state'], string> = {
+    unsupported: '',
+    idle: 'Checking for a newer release…',
+    checking: 'Checking for a newer release…',
+    current: 'This is the newest release.',
+    available: `Version ${apk.latest} is available. Download it, then open the file to install over this one.`,
+    offline: 'No internet, so the latest release is unknown. This display keeps working either way.',
+    error: 'Could not reach GitHub just now. It will try again later.',
+  };
+
+  return (
+    <>
+      <InfoRow label="App version" value={apk.running ?? '—'} />
+      {apk.latest && <InfoRow label="Latest release" value={apk.latest} />}
+
+      <div
+        style={{
+          fontSize: 12,
+          color: apk.state === 'available' ? t.accentTeal : t.textSecondary,
+          margin: '12px 0',
+          lineHeight: 1.6,
+        }}
+      >
+        {note[apk.state]}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <PrimaryButton onClick={apk.check} disabled={apk.state === 'checking'}>
+          {apk.state === 'checking' ? 'Checking…' : 'Check for Updates'}
+        </PrimaryButton>
+
+        {apk.state === 'available' && (
+          // target=_blank so Capacitor hands it to the system browser rather
+          // than navigating the kiosk away from itself.
+          <a
+            href={apk.url}
+            target="_blank"
+            rel="noreferrer noopener"
+            style={{
+              padding: '10px 18px',
+              borderRadius: 8,
+              border: `1px solid ${t.accentTeal}`,
+              color: t.accentTeal,
+              fontSize: 13,
+              textDecoration: 'none',
+            }}
+          >
+            ⬇ Download {apk.latest}
+          </a>
+        )}
+
+        <StatusBadge ok={isOnline} label={isOnline ? 'Online' : 'Offline'} />
+      </div>
+
+      <div style={{ fontSize: 12, color: t.textSecondary, marginTop: 8, lineHeight: 1.6 }}>
+        Installing keeps this display's settings. The app cannot install the update by itself, so
+        the download opens in your browser.
+      </div>
+    </>
+  );
+}
 
 function InfoRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   const t = useTheme();
@@ -94,6 +165,9 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
 
 export default function TabAppInfo() {
   const t = useTheme();
+
+  // Non-null only in the APK, where the whole web update path is inert.
+  const apk = useApkUpdate();
 
   // ── PWA install prompt ───────────────────────────────────────
   const deferredPrompt = useRef<any>(null);
@@ -251,18 +325,24 @@ export default function TabAppInfo() {
 
       {/* ── Update ──────────────────────────────────────────── */}
       <SettingsSectionHeader title="Updates" />
-      <div style={{ fontSize: 12, color: t.textSecondary, marginBottom: 12, lineHeight: 1.6 }}>
-        The app auto-updates in the background when connected. Use this to check immediately.
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <PrimaryButton
-          onClick={checkForUpdate}
-          disabled={updateState === 'checking' || updateState === 'updating'}
-        >
-          {updateLabel[updateState]}
-        </PrimaryButton>
-        <StatusBadge ok={isOnline} label={isOnline ? 'Online' : 'Offline'} />
-      </div>
+      {apk.running ? (
+        <ApkUpdateBlock apk={apk} isOnline={isOnline} />
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: t.textSecondary, marginBottom: 12, lineHeight: 1.6 }}>
+            The app auto-updates in the background when connected. Use this to check immediately.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <PrimaryButton
+              onClick={checkForUpdate}
+              disabled={updateState === 'checking' || updateState === 'updating'}
+            >
+              {updateLabel[updateState]}
+            </PrimaryButton>
+            <StatusBadge ok={isOnline} label={isOnline ? 'Online' : 'Offline'} />
+          </div>
+        </>
+      )}
       <div style={{ height: 16 }} />
 
       {/* ── Service Worker ──────────────────────────────────── */}

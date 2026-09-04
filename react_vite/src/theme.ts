@@ -405,6 +405,23 @@ function applyTheme(theme: Theme): void {
   root.style.setProperty('--c-ticker-bg',   theme.tickerBg);
 }
 
+/**
+ * Applies the theme the synced config names, if it is not already on screen.
+ *
+ * The theme id lives in the config as `meta.displayThemeId` so every screen in
+ * a masjid changes together; localStorage stays as the device's copy of the
+ * last applied id, which is what paints the first frame on a cold start before
+ * the config has been read. A null id means a screen configured before the
+ * theme was synced, and it keeps whatever it already had -- adopting one
+ * device's taste for the whole masjid on upgrade is not this function's call.
+ */
+export function applyThemeId(id: string | null): void {
+  if (!id) return;
+  if (!THEMES.some((t) => t.id === id)) return;
+  if (getTheme().id === id) return;
+  setTheme(id);
+}
+
 /** Call once on app startup to restore the persisted theme. */
 export function initTheme(): void {
   applyTheme(getTheme());

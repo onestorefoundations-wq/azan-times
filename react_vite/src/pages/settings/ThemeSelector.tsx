@@ -1,9 +1,12 @@
 /**
  * ThemeSelector.tsx
  * Displays 12 themes grouped into Dark / Medium / Light rows.
- * Each card shows a mini TV-preview; clicking applies and persists the theme.
+ *
+ * Each card shows a mini TV-preview. Clicking applies the theme straight away
+ * so the preview is honest, and writes it into the settings draft so Save
+ * pushes it to every screen in the masjid -- the theme is mosque-wide, like the
+ * template beside it.
  */
-import { useState } from 'react';
 import { THEMES, Theme, getTheme, setTheme } from '../../theme';
 import { useTheme } from './helpers';
 
@@ -13,13 +16,20 @@ const GROUPS: { key: Theme['group']; label: string; emoji: string }[] = [
   { key: 'light',  label: 'Light',  emoji: '☀️' },
 ];
 
-export default function ThemeSelector() {
+export default function ThemeSelector({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (id: string) => void;
+}) {
   const t = useTheme();
-  const [activeId, setActiveId] = useState(() => getTheme().id);
+  // A screen whose config predates the synced theme still has one on disk.
+  const activeId = value ?? getTheme().id;
 
   const handleSelect = (id: string) => {
     setTheme(id);
-    setActiveId(id);
+    onChange(id);
   };
 
   return (

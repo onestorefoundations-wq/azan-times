@@ -270,9 +270,13 @@ export default function SettingsPage() {
               <TabGeneral
                 profile={draft.profile}
                 template={draft.meta.displayTemplate}
+                themeId={draft.meta.displayThemeId}
                 onChange={(profile) => setDraft({ ...draft, profile })}
                 onTemplateChange={(displayTemplate) =>
                   setDraft({ ...draft, meta: { ...draft.meta, displayTemplate } })
+                }
+                onThemeChange={(displayThemeId) =>
+                  setDraft({ ...draft, meta: { ...draft.meta, displayThemeId } })
                 }
               />
             )}

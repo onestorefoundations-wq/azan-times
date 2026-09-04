@@ -49,6 +49,7 @@ export const SupabaseSync = {
     onStatusChange = cbs.onStatusChange;
     onConfigUpdated = cbs.onConfigUpdated;
 
+    repairStaleSectionVersions();
     await SupabaseSync.syncNow();
 
     const config = StorageService.loadConfig();
@@ -212,7 +213,18 @@ export const SupabaseSync = {
       section_versions?: SectionVersions;
     };
 
-    StorageService.saveSectionVersions(result.section_versions ?? {});
+    // Only the sections this push carried. The server returns the whole map,
+    // and saving it verbatim claimed agreement with sections this device has
+    // never seen: a ticker edited on the phone while this screen was asleep got
+    // stamped as "already in step" by the next unrelated push here, and the
+    // pull filter then skipped it for good.
+    const pushedVersions = { ...StorageService.getSectionVersions() };
+    const remoteVersions = result.section_versions ?? {};
+    for (const name of names) {
+      const v = remoteVersions[name];
+      if (typeof v === 'number') pushedVersions[name] = v;
+    }
+    StorageService.saveSectionVersions(pushedVersions);
     StorageService.saveSyncMeta({
       ...config.meta,
       supabaseConfigVersion: result.config_version ?? config.meta.supabaseConfigVersion,
@@ -360,6 +372,30 @@ export const SupabaseSync = {
 };
 
 // ── internal ──────────────────────────────────────────────────
+
+/** localStorage flag: this build has already run the version-map repair. */
+const REPAIR_KEY = 'section_versions_repaired_v1';
+
+/**
+ * Clears the recorded section versions once, on the first run of a build that
+ * no longer overwrites them wholesale on push.
+ *
+ * A device that pushed while another had edited a different section recorded
+ * that other section's version without ever applying it, so the pull filter
+ * skipped it permanently -- most visibly the ticker. Forgetting the versions
+ * makes the next syncNow re-pull every section from the cloud, which is the
+ * state the device should have been in. Nothing local is lost: an unpushed
+ * edit is protected by its dirty marker, which the pull respects.
+ */
+function repairStaleSectionVersions(): void {
+  try {
+    if (localStorage.getItem(REPAIR_KEY)) return;
+    localStorage.setItem(REPAIR_KEY, '1');
+    StorageService.saveSectionVersions({});
+  } catch {
+    /* private mode / storage disabled -- the repair is best-effort */
+  }
+}
 
 /**
  * Applies [picked] cloud sections onto local storage, recording the versions

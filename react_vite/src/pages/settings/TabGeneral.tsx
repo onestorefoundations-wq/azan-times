@@ -6,19 +6,23 @@ import TemplateSelector from './TemplateSelector';
 export default function TabGeneral({
   profile,
   template,
+  themeId,
   onChange,
   onTemplateChange,
+  onThemeChange,
 }: {
   profile: MasjidProfile;
   template: DisplayTemplate;
+  themeId: string | null;
   onChange: (p: MasjidProfile) => void;
   onTemplateChange: (t: DisplayTemplate) => void;
+  onThemeChange: (id: string) => void;
 }) {
   const t = useTheme();
   return (
     <SettingsTabScaffold title="General Settings">
       <TemplateSelector value={template} onChange={onTemplateChange} />
-      <ThemeSelector />
+      <ThemeSelector value={themeId} onChange={onThemeChange} />
       <div style={{ height: 1, background: t.borderSubtle, margin: '4px 0 20px' }} />
       <SettingsFormField
         label="Masjid / Mosque Name"

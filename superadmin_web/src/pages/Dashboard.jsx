@@ -2,6 +2,21 @@ import { useEffect, useState } from 'react';
 import { supabase, FUNCTIONS_URL, SUPABASE_ANON_KEY } from '../supabaseClient';
 import { AuthSession } from '../authSession';
 
+// Sections the TV app owns but an older config row may not carry yet. The
+// editors below index into them directly, and a save diffs against the same
+// filled-in baseline, so seeding here costs no spurious push.
+const TICKER_DEFAULT = { enabled: false, messages: ['Welcome to our Masjid!'], speed: 50 };
+const QUOTES_DEFAULT = { enabled: true, rotation_seconds: 20, entries: [] };
+
+const withEditableDefaults = (cfg) => ({
+  ...cfg,
+  ticker_settings: { ...TICKER_DEFAULT, ...(cfg?.ticker_settings ?? {}) },
+  quotes_settings: { ...QUOTES_DEFAULT, ...(cfg?.quotes_settings ?? {}) },
+});
+
+/** Quote ids only have to be unique within one mosque's list. */
+const newQuoteId = () => `q_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
 export default function Dashboard() {
   const [devices, setDevices] = useState([]);
   const [loadingDevices, setLoadingDevices] = useState(true);
@@ -64,10 +79,13 @@ export default function Dashboard() {
       if (error) throw error;
 
       if (data) {
+        const filled = withEditableDefaults(data.config_json);
         setConfigId(data.id);
         setConfigVersion(data.config_version);
-        setConfig(data.config_json);
-        setLoadedConfig(data.config_json);
+        setConfig(filled);
+        // Same object shape as `config`, so the sections seeded above only
+        // reach the diff once an admin actually edits them.
+        setLoadedConfig(filled);
       } else {
         // Fallback seed if config row doesn't exist
         const defaultConfig = {
@@ -116,6 +134,8 @@ export default function Dashboard() {
             iqamah_time: '13:30',
             display_label: "Jumu'ah"
           },
+          ticker_settings: { ...TICKER_DEFAULT },
+          quotes_settings: { ...QUOTES_DEFAULT },
           announcements: [],
           slide_assets: []
         };
@@ -132,10 +152,11 @@ export default function Dashboard() {
 
         if (insertError) throw insertError;
         if (newRow) {
+          const filled = withEditableDefaults(newRow.config_json);
           setConfigId(newRow.id);
           setConfigVersion(1);
-          setConfig(newRow.config_json);
-          setLoadedConfig(newRow.config_json);
+          setConfig(filled);
+          setLoadedConfig(filled);
         }
       }
     } catch (err) {
@@ -156,6 +177,40 @@ export default function Dashboard() {
   };
 
   // Safe nested config updater
+  const updateTickerMessages = (messages) => {
+    setConfig(prev => ({ ...prev, ticker_settings: { ...prev.ticker_settings, messages } }));
+  };
+
+  const updateTickerMessage = (index, text) => {
+    updateTickerMessages((config.ticker_settings.messages || []).map((m, i) => (i === index ? text : m)));
+  };
+
+  const addTickerMessage = () => {
+    updateTickerMessages([...(config.ticker_settings.messages || []), '']);
+  };
+
+  const deleteTickerMessage = (index) => {
+    updateTickerMessages((config.ticker_settings.messages || []).filter((_, i) => i !== index));
+  };
+
+  const updateQuoteEntries = (entries) => {
+    setConfig(prev => ({ ...prev, quotes_settings: { ...prev.quotes_settings, entries } }));
+  };
+
+  const updateQuoteField = (index, field, value) => {
+    updateQuoteEntries(
+      (config.quotes_settings.entries || []).map((q, i) => (i === index ? { ...q, [field]: value } : q))
+    );
+  };
+
+  const addQuote = () => {
+    updateQuoteEntries([...(config.quotes_settings.entries || []), { id: newQuoteId(), text: '', source: '' }]);
+  };
+
+  const deleteQuote = (index) => {
+    updateQuoteEntries((config.quotes_settings.entries || []).filter((_, i) => i !== index));
+  };
+
   const updateConfigField = (section, field, value) => {
     setConfig(prev => ({
       ...prev,
@@ -254,6 +309,22 @@ export default function Dashboard() {
         pause_before_adhan_mins: parseInt(config.slideshow_settings.pause_before_adhan_mins, 10) || 2,
         pause_after_iqamah_mins: parseInt(config.slideshow_settings.pause_after_iqamah_mins, 10) || 15,
         overlay_size_percent: parseInt(config.slideshow_settings.overlay_size_percent, 10) || 25,
+      },
+      ticker_settings: {
+        ...config.ticker_settings,
+        speed: parseInt(config.ticker_settings.speed, 10) || 50,
+        // A blank line would scroll past as a gap the congregation reads as a
+        // fault, so empty rows are dropped rather than published.
+        messages: (config.ticker_settings.messages || []).map((m) => m.trim()).filter(Boolean),
+      },
+      quotes_settings: {
+        ...config.quotes_settings,
+        rotation_seconds: parseInt(config.quotes_settings.rotation_seconds, 10) || 20,
+        // The TV drops text-less quotes on read; dropping them here too keeps
+        // the row and the screen showing the same list.
+        entries: (config.quotes_settings.entries || [])
+          .filter((q) => (q.text || '').trim() !== '')
+          .map((q) => ({ id: q.id, text: q.text.trim(), source: (q.source || '').trim() })),
       }
     };
 
@@ -623,6 +694,12 @@ export default function Dashboard() {
                   <button className={`sidebar-btn ${activeTab === 'jumuah' ? 'active' : ''}`} onClick={() => setActiveTab('jumuah')}>
                     🕌 Friday Jumu'ah
                   </button>
+                  <button className={`sidebar-btn ${activeTab === 'ticker' ? 'active' : ''}`} onClick={() => setActiveTab('ticker')}>
+                    🔤 Scrolling Ticker
+                  </button>
+                  <button className={`sidebar-btn ${activeTab === 'quotes' ? 'active' : ''}`} onClick={() => setActiveTab('quotes')}>
+                    📜 Quotes & Hadith
+                  </button>
                   <button className={`sidebar-btn ${activeTab === 'system' ? 'active' : ''}`} onClick={() => setActiveTab('system')}>
                     ⚙️ Display Preferences
                   </button>
@@ -932,7 +1009,136 @@ export default function Dashboard() {
                       </div>
                     )}
 
-                    {/* Tab 5: Display Preferences */}
+                    {/* Tab 5: Scrolling Ticker */}
+                    {activeTab === 'ticker' && (
+                      <div>
+                        <h3>Scrolling Ticker</h3>
+                        <p style={{ margin: '0 0 20px', color: 'rgba(232,240,254,0.6)', fontSize: '13px' }}>
+                          Short announcements that scroll along the bottom of every linked screen. Lines are shown in order, separated by a bullet.
+                        </p>
+                        <div style={{ display: 'flex', gap: '25px', marginBottom: '15px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!config.ticker_settings.enabled}
+                              onChange={(e) => updateConfigField('ticker_settings', 'enabled', e.target.checked)}
+                            />
+                            Show the ticker bar on screen
+                          </label>
+                        </div>
+
+                        <div className="form-group">
+                          <label>Scroll Speed (pixels per second)</label>
+                          <input
+                            type="number"
+                            value={config.ticker_settings.speed}
+                            onChange={(e) => updateConfigField('ticker_settings', 'speed', e.target.value)}
+                          />
+                        </div>
+
+                        <div style={{ marginTop: '25px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '20px' }}>
+                          <h4 style={{ color: '#00d4aa', margin: '0 0 15px', fontSize: '15px' }}>Ticker Lines</h4>
+                          {(config.ticker_settings.messages || []).length === 0 ? (
+                            <p style={{ color: 'rgba(232,240,254,0.4)', fontStyle: 'italic', margin: '15px 0', fontSize: '13px' }}>
+                              No ticker lines yet. Add one below.
+                            </p>
+                          ) : (
+                            (config.ticker_settings.messages || []).map((message, index) => (
+                              <div key={index} style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
+                                <input
+                                  type="text"
+                                  style={{ flex: 1 }}
+                                  value={message}
+                                  placeholder="e.g. Qur'an class after Isha every Thursday"
+                                  onChange={(e) => updateTickerMessage(index, e.target.value)}
+                                />
+                                <button type="button" className="btn-small-danger" onClick={() => deleteTickerMessage(index)}>&#128465;&#65039;</button>
+                              </div>
+                            ))
+                          )}
+                          <button type="button" className="btn-action btn-secondary" style={{ marginTop: '10px' }} onClick={addTickerMessage}>
+                            &#10133; Add Ticker Line
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tab 6: Quotes and Hadith */}
+                    {activeTab === 'quotes' && (
+                      <div>
+                        <h3>Quotes &amp; Hadith</h3>
+                        <p style={{ margin: '0 0 20px', color: 'rgba(232,240,254,0.6)', fontSize: '13px' }}>
+                          Longer passages the congregation reads while waiting. They rotate in the Focus template&apos;s panel &mdash; separate from the ticker, which scrolls short notices.
+                        </p>
+                        <div style={{ display: 'flex', gap: '25px', marginBottom: '15px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!config.quotes_settings.enabled}
+                              onChange={(e) => updateConfigField('quotes_settings', 'enabled', e.target.checked)}
+                            />
+                            Include quotes in the rotating panel
+                          </label>
+                        </div>
+
+                        <div className="form-group">
+                          <label>Seconds Per Quote Before Rotating</label>
+                          <input
+                            type="number"
+                            value={config.quotes_settings.rotation_seconds}
+                            onChange={(e) => updateConfigField('quotes_settings', 'rotation_seconds', e.target.value)}
+                          />
+                        </div>
+
+                        <div style={{ marginTop: '25px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '20px' }}>
+                          <h4 style={{ color: '#00d4aa', margin: '0 0 15px', fontSize: '15px' }}>Quote List</h4>
+                          {(config.quotes_settings.entries || []).length === 0 ? (
+                            <p style={{ color: 'rgba(232,240,254,0.4)', fontStyle: 'italic', margin: '15px 0', fontSize: '13px' }}>
+                              No quotes yet. Add one below.
+                            </p>
+                          ) : (
+                            (config.quotes_settings.entries || []).map((quote, index) => (
+                              <div
+                                key={quote.id || index}
+                                style={{
+                                  padding: '15px',
+                                  marginBottom: '12px',
+                                  background: 'rgba(255,255,255,0.02)',
+                                  border: '1px solid rgba(255,255,255,0.08)',
+                                  borderRadius: '8px'
+                                }}
+                              >
+                                <div className="form-group">
+                                  <label>Quote Text</label>
+                                  <textarea
+                                    rows={3}
+                                    style={{ width: '100%', resize: 'vertical' }}
+                                    value={quote.text || ''}
+                                    placeholder="A short hadith or ayah the congregation can read at a glance."
+                                    onChange={(e) => updateQuoteField(index, 'text', e.target.value)}
+                                  />
+                                </div>
+                                <div className="form-group" style={{ marginBottom: '10px' }}>
+                                  <label>Attribution (Optional)</label>
+                                  <input
+                                    type="text"
+                                    value={quote.source || ''}
+                                    placeholder="e.g. Sahih al-Bukhari"
+                                    onChange={(e) => updateQuoteField(index, 'source', e.target.value)}
+                                  />
+                                </div>
+                                <button type="button" className="btn-small-danger" onClick={() => deleteQuote(index)}>&#128465;&#65039; Remove</button>
+                              </div>
+                            ))
+                          )}
+                          <button type="button" className="btn-action btn-secondary" style={{ marginTop: '10px' }} onClick={addQuote}>
+                            &#10133; Add Quote
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tab 7: Display Preferences */}
                     {activeTab === 'system' && (
                       <div>
                         <h3>Display Preferences</h3>

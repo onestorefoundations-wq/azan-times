@@ -489,6 +489,11 @@ export interface SyncMeta {
   linkedMosqueName: string | null;
   displayOrientation: DisplayOrientation;
   displayTemplate: DisplayTemplate;
+  /**
+   * Which of the 12 display themes this masjid uses, or null for a screen whose
+   * theme predates syncing -- see theme.ts.
+   */
+  displayThemeId: string | null;
   customBackgroundPath: string | null;
   displayFontFamily: string | null;
   primaryTextColor: string | null;
@@ -517,6 +522,7 @@ export const defaultSyncMeta = (): SyncMeta => ({
   // New installs get the Focus template. Existing ones keep Classic -- see the
   // deliberate default mismatch in syncMetaFromJson below.
   displayTemplate: 'focus',
+  displayThemeId: null,
   customBackgroundPath: null,
   displayFontFamily: null,
   primaryTextColor: null,
@@ -546,6 +552,7 @@ export const syncMetaFromJson = (j: Json): SyncMeta => ({
   // key means a screen configured before templates existed, and silently
   // relaying out a mosque's working display is not an upgrade.
   displayTemplate: str(j.display_template, 'classic') as DisplayTemplate,
+  displayThemeId: strOrNull(j.display_theme_id),
   customBackgroundPath: strOrNull(j.custom_background_path),
   displayFontFamily: strOrNull(j.display_font_family),
   primaryTextColor: strOrNull(j.primary_text_color),
@@ -572,6 +579,7 @@ export const syncMetaToJson = (m: SyncMeta): Json => ({
   linked_mosque_name: m.linkedMosqueName,
   display_orientation: m.displayOrientation,
   display_template: m.displayTemplate,
+  display_theme_id: m.displayThemeId,
   custom_background_path: m.customBackgroundPath,
   display_font_family: m.displayFontFamily,
   primary_text_color: m.primaryTextColor,
@@ -710,6 +718,9 @@ export const appConfigToCloudSections = (c: AppConfig): Record<ConfigSection, Js
     // Mosque-wide: every screen in one masjid should look alike. Orientation
     // stays device-local because screens are physically mounted differently.
     display_template: c.meta.displayTemplate,
+    // Mosque-wide for the same reason as the template: the theme is what the
+    // congregation sees. `theme_id` is the key the Flutter client already used.
+    theme_id: c.meta.displayThemeId,
     primary_text_color: c.meta.primaryTextColor,
     secondary_text_color: c.meta.secondaryTextColor,
     prayer_name_color: c.meta.prayerNameColor,
@@ -771,6 +782,7 @@ export const applyCloudSections = (
       dateTextColor: strOrNull(ds.date_text_color),
       tickerTextColor: strOrNull(ds.ticker_text_color),
       displayTemplate: str(ds.display_template, next.meta.displayTemplate) as DisplayTemplate,
+      displayThemeId: strOrNull(ds.theme_id) ?? next.meta.displayThemeId,
       backgroundImages: Array.isArray(ds.background_images) ? (ds.background_images as string[]) : [],
       activeBackgroundMediaId: strOrNull(ds.active_background_media_id),
     };
@@ -799,6 +811,7 @@ export const appConfigFromCloudJson = (j: Json, localMeta?: SyncMeta): AppConfig
     dateTextColor: strOrNull(ds.date_text_color),
     tickerTextColor: strOrNull(ds.ticker_text_color),
     displayTemplate: str(ds.display_template, base.displayTemplate) as DisplayTemplate,
+    displayThemeId: strOrNull(ds.theme_id) ?? base.displayThemeId,
     backgroundImages: Array.isArray(ds.background_images) ? (ds.background_images as string[]) : [],
     activeBackgroundMediaId: strOrNull(ds.active_background_media_id),
   };

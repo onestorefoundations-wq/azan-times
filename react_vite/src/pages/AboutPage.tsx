@@ -128,7 +128,7 @@ export default function AboutPage() {
             <Feature
               icon="📱"
               title="Change it from your phone"
-              body="Update times, slides and the theme from anywhere. Connected displays pick up the change as soon as they see a network."
+              body="Update times, slides, the ticker, quotes and the theme from anywhere. Connected displays pick up the change as soon as they see a network."
             />
             <Feature
               icon="🖼️"

@@ -44,6 +44,7 @@ import { MediaLibraryService } from '../core/mediaLibraryService';
 import { MediaCache } from '../core/mediaCache';
 import { PendingUploads, PendingEntry, mimeFromFilename } from '../core/pendingUploads';
 import { DeviceService } from '../core/deviceService';
+import { applyThemeId } from '../theme';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export type DisplayState = 'normal' | 'adhanAlert' | 'iqamahAlert' | 'slideshow';
@@ -90,6 +91,9 @@ let midnightTimer: ReturnType<typeof setTimeout> | null = null;
 let slideshowTimer: ReturnType<typeof setTimeout> | null = null;
 let lastAlertedAdhan: string | null = null;
 let lastAlertedIqamah: string | null = null;
+// False until the first tick with prayer times has run. That tick only records
+// which window the app happened to open inside; it never plays. See tick().
+let alertsPrimed = false;
 let alertTimeout: number | null = null; // epoch ms
 // Identifies the alert currently on screen, so a late audio-finished callback
 // from the adhan cannot dismiss the iqamah alert that replaced it.
@@ -290,6 +294,24 @@ export const useAppStore = create<AppState>((set, get) => {
 
     let displayState = get().displayState;
 
+    /**
+     * A launch that lands in the middle of an alert window is not an alert.
+     *
+     * The dedupe keys start null, so the first tick after a fresh install or a
+     * reload saw state 'adhanTime'/'iqamahCountdown' as a transition it had not
+     * announced yet and played the full adhan -- for a prayer whose call went
+     * out minutes ago. Priming the keys on that first tick makes the app fire
+     * only on windows it actually watches open. Opening a second before adhan
+     * still rings: that tick primes on 'preAdhan' and the next one transitions.
+     */
+    if (!alertsPrimed) {
+      alertsPrimed = true;
+      if (prayer) {
+        if (state === 'adhanTime' || state === 'iqamahCountdown') lastAlertedAdhan = prayer.key;
+        if (state === 'iqamahCountdown') lastAlertedIqamah = prayer.key;
+      }
+    }
+
     // The timeouts below are a fallback for a screen whose audio is off or
     // still blocked by the autoplay policy: when the file does play, endAlert
     // clears the overlay the moment the last repeat finishes.
@@ -341,7 +363,10 @@ export const useAppStore = create<AppState>((set, get) => {
 
   const applyConfigSideEffects = (): void => {
     recalc();
-    const { features } = get().config;
+    const { features, meta } = get().config;
+    // Covers a cloud pull too: a realtime UPDATE lands in loadConfig, so a theme
+    // picked on the phone repaints every linked screen without a reload.
+    applyThemeId(meta.displayThemeId);
     AudioService.setEnabled(features.audioAlertsEnabled);
     // Hand the same alert times to the OS. On native the WebView's tick stops
     // when the app is backgrounded; the alarm keeps the adhan on time. No-op in

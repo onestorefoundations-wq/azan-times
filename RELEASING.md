@@ -102,6 +102,12 @@ Android refuses to install an APK whose `versionCode` is not higher than the
 installed one, and the failure is a bare "App not installed" with no
 explanation. Bump it on **every** published release.
 
+Commit the bump on its own, as `chore(android): bump to versionCode <n> /
+versionName <x.y.z>`, separate from the changes being shipped. `git log` is then
+a list of releases as well as of work, and the commit a tag points at says which
+release it is without opening a diff. Do not fold the bump into a feature or fix
+commit.
+
 Then build, from `capacitor_app/`:
 
 ```bash
